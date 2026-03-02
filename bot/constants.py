@@ -9,13 +9,14 @@ from typing import Final
 
 __all__ = [
     'ALLOWED_IMAGE_TYPES',
+    'BypassMethod',
     'CACHE_TTL_LONG',
     'CACHE_TTL_SHORT',
     'DEFAULT_TIMEOUT_SECONDS',
+    'FREEMIUM_MARKERS',
     'MAX_MESSAGE_LENGTH',
     'MAX_RETRY_COUNT',
     'MAX_URL_LENGTH',
-    'BypassMethod',
     'PaywallType',
     'RETRY_BACKOFF_FACTOR',
     'TRACKING_PARAMS',
@@ -31,6 +32,7 @@ class PaywallType(StrEnum):
     SOFT = 'soft'
     METERED = 'metered'
     HARD = 'hard'
+    FREEMIUM = 'freemium'
     UNKNOWN = 'unknown'
 
 
@@ -42,6 +44,16 @@ class BypassMethod(StrEnum):
     HEADLESS_AUTH = 'headless_auth'
     ARCHIVE_RELAY = 'archive_relay'
 
+
+# --- Freemium-маркеры в URL/DOM ---
+FREEMIUM_MARKERS: Final = frozenset({
+    'F+',
+    'S+',
+    'T+',
+    'Z+',
+    'plus',
+    'reduced=true',
+})
 
 # --- URL validation ---
 MAX_URL_LENGTH: Final = 2048

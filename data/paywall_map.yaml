@@ -1,0 +1,81 @@
+# data/paywall_map.yaml
+# Конфигурация paywall для целевых изданий.
+# Ключ: домен (без www)
+# type: soft / metered / hard / freemium (см. constants.PaywallType)
+# platform: Специфичная логика для данного издания (если есть)
+# method: Базовый метод обхода (js_disable, googlebot_spoof, headless_auth, archive_relay)
+
+# --- Немецкие издания (Freemium) ---
+# Особенность: контент частично открыт, но ключевые статьи имеют маркер
+# (S+, Z+, F+, ?reduced=true), который требует проверки в платформе german_freemium.
+spiegel.de:
+  type: freemium
+  platform: german_freemium
+  method: js_disable
+  note: "S+ статьи требуют проверки маркера в URL/DOM"
+
+zeit.de:
+  type: freemium
+  platform: german_freemium
+  method: js_disable
+  note: "Z+ маркер для премиум-контента"
+
+faz.net:
+  type: freemium
+  platform: german_freemium
+  method: js_disable
+  note: "FAZ+ (F+) маркер"
+
+sueddeutsche.de:
+  type: freemium
+  platform: german_freemium
+  method: js_disable
+  note: "Параметр ?reduced=true в URL примера"
+
+tagesspiegel.de:
+  type: freemium
+  platform: german_freemium
+  method: js_disable
+  note: "Может иметь схожие freemium-маркеры"
+
+welt.de:
+  type: freemium
+  platform: german_freemium
+  method: js_disable
+  note: "welt Plus (пример из ссылки /plus/)"
+
+# --- Издания Condé Nast (Metered / Soft) ---
+# Используют общую платформу, часто с мягким лимитом.
+newyorker.com:
+  type: metered
+  platform: conde_nast
+  method: googlebot_spoof
+
+vanityfair.com:
+  type: metered
+  platform: conde_nast
+  method: googlebot_spoof
+
+# --- Американские издания с жестким лимитом (Metered) ---
+nytimes.com:
+  type: metered
+  method: googlebot_spoof
+  note: "Требует хорошей ротации User-Agent и IP"
+
+# --- Российское издание (Hard) ---
+republicmag.io: # или republic.ru (основной домен)
+  type: hard
+  platform: republic
+  method: headless_auth
+  note: "Hard paywall, вероятно, с антибот-защитой"
+
+# --- Британские издания (Soft / Hard) ---
+telegraph.co.uk:
+  type: soft
+  method: js_disable
+  note: "Классический soft paywall, контент в DOM"
+
+thetimes.com:
+  type: hard
+  method: headless_auth
+  note: "Полный hard paywall, контента в DOM нет"
