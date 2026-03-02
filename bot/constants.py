@@ -17,6 +17,8 @@ __all__ = [
     'MAX_MESSAGE_LENGTH',
     'MAX_RETRY_COUNT',
     'MAX_URL_LENGTH',
+    'PBKDF2_ITERATIONS',
+    'PBKDF2_SALT',
     'PaywallType',
     'RETRY_BACKOFF_FACTOR',
     'TRACKING_PARAMS',
@@ -73,6 +75,10 @@ TRACKING_PARAMS: Final = frozenset({
     'yclid',
     '_ga',
 })
+
+# --- Шифрование (PBKDF2 + Fernet) ---
+PBKDF2_SALT: Final = b'unpaywall_salt_2026'
+PBKDF2_ITERATIONS: Final = 100_000
 
 # --- HTTP ---
 DEFAULT_TIMEOUT_SECONDS: Final = 30

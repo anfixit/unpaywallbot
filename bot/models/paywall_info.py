@@ -5,7 +5,7 @@
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
+from datetime import datetime
 
 from bot.constants import BypassMethod, PaywallType
 
@@ -16,8 +16,8 @@ __all__ = ['PaywallInfo']
 class PaywallInfo:
     """Информация о типе paywall для конкретного URL.
 
-    Создаётся классификатором на основе домена и содержимого
-    страницы (если уже был сделан запрос).
+    Создаётся классификатором на основе домена
+    и содержимого страницы.
     """
 
     # --- Обязательные поля ---
@@ -31,32 +31,35 @@ class PaywallInfo:
     paywall_type: PaywallType = PaywallType.UNKNOWN
     """Тип paywall (soft/metered/hard/freemium/unknown)."""
 
-    suggested_method: Optional[BypassMethod] = None
+    suggested_method: BypassMethod | None = None
     """Предполагаемый метод обхода (если известен)."""
 
     # --- Платформенная специфика ---
-    platform: Optional[str] = None
-    """Имя платформы для специфичной обработки (например, 'german_freemium')."""
+    platform: str | None = None
+    """Имя платформы (например, 'german_freemium')."""
 
     # --- Детали для методов ---
     requires_auth: bool = False
-    """Требуется ли авторизация (аккаунт) для доступа."""
+    """Требуется ли авторизация (аккаунт)."""
 
     requires_headless: bool = False
-    """Требуется ли headless-браузер (для hard paywall)."""
+    """Требуется ли headless-браузер."""
 
     # --- Служебные поля ---
-    classified_at: datetime = field(default_factory=datetime.now)
-    """Время классификации (UTC)."""
+    classified_at: datetime = field(
+        default_factory=datetime.now,
+    )
+    """Время классификации."""
 
     confidence: float = 1.0
-    """Уверенность в классификации (0.0 - 1.0)."""
+    """Уверенность в классификации (0.0–1.0)."""
 
     @classmethod
     def unknown(cls, url: str) -> 'PaywallInfo':
-        """Создать запись для неизвестного типа paywall.
+        """Создать запись для неизвестного paywall.
 
-        Используется как fallback, когда классификация не удалась.
+        Используется как fallback, когда классификация
+        не удалась.
         """
         from bot.utils.url_utils import extract_domain
 
@@ -74,7 +77,7 @@ class PaywallInfo:
 
     @property
     def can_bypass(self) -> bool:
-        """Можно ли потенциально обойти (есть метод)."""
+        """Можно ли потенциально обойти."""
         return self.suggested_method is not None
 
     def __str__(self) -> str:

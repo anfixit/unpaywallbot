@@ -1,7 +1,8 @@
 """Основной хендлер для обработки URL.
 
 Получает ссылку от пользователя, классифицирует paywall,
-спрашивает про авторизацию если нужно, и запускает оркестратор.
+спрашивает про авторизацию если нужно, и запускает
+оркестратор.
 """
 
 import re
@@ -11,19 +12,35 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from bot.services.orchestrator import Orchestrator
 from bot.utils.text_formatter import split_into_chunks
 from bot.utils.url_utils import is_valid_url, normalize_url
 
+__all__ = ['router']
+
 router = Router()
-orchestrator = Orchestrator()
+
+# Lazy init — не создаём Orchestrator при импорте,
+# чтобы избежать side effects (§21.5).
+_orchestrator = None
+
+
+def _get_orchestrator():
+    """Получить или создать синглтон оркестратора."""
+    global _orchestrator  # noqa: PLW0603
+    if _orchestrator is None:
+        from bot.services.orchestrator import (
+            Orchestrator,
+        )
+        _orchestrator = Orchestrator()
+    return _orchestrator
+
+
+_URL_PATTERN = re.compile(r'https?://[^\s]+')
 
 
 def extract_url(text: str) -> str | None:
-    """Извлечь URL из текста сообщения."""
-    # Простой regex для поиска URL
-    url_pattern = r'https?://[^\s]+'
-    match = re.search(url_pattern, text)
+    """Извлечь первый URL из текста сообщения."""
+    match = _URL_PATTERN.search(text)
     return match.group(0) if match else None
 
 
@@ -36,13 +53,13 @@ async def process_url_with_account(
     state: FSMContext,
 ) -> None:
     """Обработать URL с известным наличием аккаунта."""
-    # Очищаем состояние
     await state.clear()
 
-    # Отправляем статус
-    status_msg = await message.answer('🔍 Анализирую статью...')
+    status_msg = await message.answer(
+        '🔍 Анализирую статью...',
+    )
 
-    # Запускаем оркестратор
+    orchestrator = _get_orchestrator()
     request = await orchestrator.process_url(
         url=url,
         user_id=user_id,
@@ -53,81 +70,107 @@ async def process_url_with_account(
     await status_msg.delete()
 
     if request.success and request.article:
-        # Успех — отправляем статью
-        title = request.article.title or 'Без заголовка'
+        title = (
+            request.article.title or 'Без заголовка'
+        )
         await message.answer(
             f'📰 *{title}*\n\n'
             f'_{request.article.url}_',
             parse_mode='Markdown',
         )
 
-        # Разбиваем текст на части
-        chunks = split_into_chunks(request.article.content)
+        chunks = split_into_chunks(
+            request.article.content,
+        )
         for i, chunk in enumerate(chunks, 1):
             if len(chunks) > 1:
-                chunk = f'*Часть {i}/{len(chunks)}*\n\n{chunk}'
-            await message.answer(chunk, parse_mode='Markdown')
+                header = (
+                    f'*Часть {i}/{len(chunks)}*'
+                )
+                chunk = f'{header}\n\n{chunk}'
+            await message.answer(
+                chunk, parse_mode='Markdown',
+            )
     else:
-        # Ошибка
-        error_text = '❌ Не удалось получить статью.\n\n'
+        error_text = (
+            '❌ Не удалось получить статью.\n\n'
+        )
         if request.error_message:
-            error_text += f'Ошибка: {request.error_message}'
+            error_text += (
+                f'Ошибка: {request.error_message}'
+            )
         else:
-            error_text += 'Попробуй другую ссылку или проверь, доступна ли статья.'
-
+            error_text += (
+                'Попробуй другую ссылку или '
+                'проверь, доступна ли статья.'
+            )
         await message.answer(error_text)
 
 
 @router.message(F.text)
-async def handle_message(message: Message, state: FSMContext) -> None:
-    """Обработать текстовое сообщение (ожидаем URL)."""
+async def handle_message(
+    message: Message,
+    state: FSMContext,
+) -> None:
+    """Обработать текстовое сообщение (URL)."""
     text = message.text.strip()
     url = extract_url(text)
 
     if not url:
         await message.answer(
-            '❌ Я не нашёл ссылку в твоём сообщении.\n'
-            'Отправь мне прямую ссылку на статью.'
+            '❌ Не нашёл ссылку в сообщении.\n'
+            'Отправь прямую ссылку на статью.',
         )
         return
 
-    # Проверяем валидность URL
     if not is_valid_url(url):
         await message.answer(
             '❌ Это не похоже на валидный URL.\n'
-            'Убедись, что ссылка начинается с http:// или https://'
+            'Убедись, что ссылка начинается '
+            'с http:// или https://',
         )
         return
 
-    # Нормализуем URL
     normalized_url = normalize_url(url)
-
-    # Сохраняем в состояние
     await state.update_data(url=normalized_url)
 
-    # Отправляем статус
-    status_msg = await message.answer('🔍 Анализирую статью...')
+    status_msg = await message.answer(
+        '🔍 Анализирую статью...',
+    )
 
-    # Быстрая классификация для проверки, нужна ли авторизация
-    paywall_info = await orchestrator.classifier.classify(normalized_url)
+    orchestrator = _get_orchestrator()
+    paywall_info = (
+        await orchestrator.classifier.classify(
+            normalized_url,
+        )
+    )
 
     await status_msg.delete()
 
     if paywall_info.requires_auth:
-        # Спрашиваем про аккаунт
         builder = InlineKeyboardBuilder()
-        builder.button(text='✅ Да, есть', callback_data='auth_yes')
-        builder.button(text='❌ Нет аккаунта', callback_data='auth_no')
-        builder.button(text='🔙 Отмена', callback_data='cancel')
+        builder.button(
+            text='✅ Да, есть',
+            callback_data='auth_yes',
+        )
+        builder.button(
+            text='❌ Нет аккаунта',
+            callback_data='auth_no',
+        )
+        builder.button(
+            text='🔙 Отмена',
+            callback_data='cancel',
+        )
         builder.adjust(2, 1)
 
         await message.answer(
-            f'🔒 Для доступа к {paywall_info.domain} нужна авторизация.\n'
-            'У тебя есть аккаунт на этом сайте?',
+            '🔒 Для доступа к '
+            f'{paywall_info.domain}'
+            ' нужна авторизация.\n'
+            'Есть аккаунт на этом сайте?',
             reply_markup=builder.as_markup(),
         )
     else:
-        # Не требует авторизации — пробуем сразу
         await process_url_with_account(
             message=message,
             url=normalized_url,
