@@ -1,0 +1,28 @@
+graph TD
+    User[Пользователь Telegram] -->|URL статьи| Bot[Telegram Bot]
+
+    subgraph "Bot Core"
+        Bot -->|1. Проверка кеша| Cache[(Redis Cache)]
+        Bot -->|2. Классификация| Classifier[Paywall Classifier]
+        Classifier -->|paywall_map.yaml| Config[(YAML Config)]
+
+        Bot -->|3. Выбор метода| Orchestrator[Orchestrator]
+
+        Orchestrator -->|Soft paywall| JS[js_disable.py]
+        Orchestrator -->|Metered| Google[googlebot_spoof.py]
+        Orchestrator -->|Freemium| German[german_freemium.py]
+        Orchestrator -->|Hard| Headless[headless_auth.py]
+        Orchestrator -->|Fallback| Archive[archive_relay.py]
+
+        JS & Google & German & Headless -->|HTML| Extractor[Content Extractor]
+        Archive -->|archive.ph| Extractor
+    end
+
+    Extractor -->|Article| Cache
+    Extractor -->|Чистый текст| Bot
+    Bot -->|Статья| User
+
+    style User fill:#f9f,stroke:#333
+    style Bot fill:#bbf,stroke:#333
+    style Cache fill:#bfb,stroke:#333
+    style Config fill:#feb,stroke:#333

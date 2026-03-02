@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  bot:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env.production
+    volumes:
+      - ./data:/app/data
+    command: uv run python -m bot.main
+
+volumes:
+  redis_data:
