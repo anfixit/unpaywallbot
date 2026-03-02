@@ -5,7 +5,7 @@
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 
 from bot.models.article import Article
 from bot.models.paywall_info import PaywallInfo
@@ -38,9 +38,9 @@ class UserRequest:
 
     # --- Временные метки ---
     received_at: datetime = field(
-        default_factory=datetime.now,
+        default_factory=lambda: datetime.now(UTC),
     )
-    """Время получения запроса."""
+    """Время получения запроса (UTC)."""
 
     processed_at: datetime | None = None
     """Время завершения обработки."""
@@ -86,7 +86,7 @@ class UserRequest:
             article: Извлечённая статья (если есть).
             error: Исключение, если произошло.
         """
-        self.processed_at = datetime.now()
+        self.processed_at = datetime.now(UTC)
 
         if article:
             self.article = article

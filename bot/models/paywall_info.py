@@ -47,7 +47,7 @@ class PaywallInfo:
 
     # --- Служебные поля ---
     classified_at: datetime = field(
-        default_factory=datetime.now,
+        default_factory=lambda: datetime.now(UTC),
     )
     """Время классификации."""
 
