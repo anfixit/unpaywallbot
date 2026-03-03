@@ -27,6 +27,7 @@ def mock_message():
     message.chat = Mock(spec=Chat)
     message.chat.id = 456
     message.text = '/start'
+    message.message_id = 1
     message.answer = AsyncMock()
     return message
 
@@ -45,15 +46,17 @@ async def test_rate_limiter_allowed(
     """Пользователь не превысил лимиты."""
     middleware = RateLimiterMiddleware()
 
-    mock_redis = AsyncMock()
+    mock_redis = Mock()
     mock_redis.client = AsyncMock()
     mock_redis.client.get = AsyncMock(
         return_value='5',
     )
-    mock_redis.client.pipeline = Mock()
     mock_pipe = AsyncMock()
-    mock_redis.client.pipeline.return_value = (
-        mock_pipe
+    mock_pipe.incr = AsyncMock()
+    mock_pipe.expire = AsyncMock()
+    mock_pipe.execute = AsyncMock()
+    mock_redis.client.pipeline = Mock(
+        return_value=mock_pipe,
     )
 
     with patch(
@@ -79,7 +82,7 @@ async def test_rate_limiter_blocked(
         rate_per_minute=5,
     )
 
-    mock_redis = AsyncMock()
+    mock_redis = Mock()
     mock_redis.client = AsyncMock()
     mock_redis.client.get = AsyncMock(
         return_value='10',
@@ -139,7 +142,9 @@ async def test_access_log(
     tmp_path,
 ) -> None:
     """Логирование запросов."""
-    middleware = AccessLogMiddleware(log_dir=tmp_path)
+    middleware = AccessLogMiddleware(
+        log_dir=tmp_path,
+    )
 
     result = await middleware(
         mock_handler, mock_message, {},

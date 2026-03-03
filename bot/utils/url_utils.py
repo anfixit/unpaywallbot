@@ -5,7 +5,11 @@
 """
 
 import hashlib
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import (
+    parse_qs,
+    urlencode,
+    urlparse,
+)
 
 from bot.constants import (
     MAX_URL_LENGTH,
@@ -23,12 +27,27 @@ __all__ = [
     'normalize_url',
 ]
 
+# Схемы, которые точно не наши
+_REJECTED_SCHEMES = frozenset({
+    'ftp', 'ftps', 'javascript', 'data',
+    'file', 'mailto', 'tel', 'ssh',
+})
+
 
 def _ensure_scheme(url: str) -> str:
     """Добавить https:// если схема отсутствует."""
     if not url.startswith(('http://', 'https://')):
         return f'https://{url}'
     return url
+
+
+def _has_rejected_scheme(url: str) -> bool:
+    """Проверить, начинается ли URL с запрещённой схемы."""
+    lower = url.lower()
+    for scheme in _REJECTED_SCHEMES:
+        if lower.startswith(f'{scheme}:'):
+            return True
+    return False
 
 
 def extract_domain(url: str) -> str:
@@ -53,14 +72,25 @@ def extract_domain(url: str) -> str:
     if not url or not isinstance(url, str):
         return ''
 
+    url = url.strip()
+    if not url:
+        return ''
+
+    if _has_rejected_scheme(url):
+        return ''
+
     try:
         parsed = urlparse(_ensure_scheme(url))
     except ValueError:
         return ''
 
-    domain = parsed.netloc.lower()
+    domain = parsed.netloc.lower().strip()
     if domain.startswith('www.'):
         domain = domain[4:]
+
+    # Домен должен содержать хотя бы одну точку
+    if '.' not in domain:
+        return ''
 
     return domain
 
@@ -72,7 +102,8 @@ def is_valid_url(url: str) -> bool:
         url: Строка для валидации.
 
     Returns:
-        True если URL имеет допустимый формат и схему.
+        True если URL имеет допустимый формат
+        и схему.
 
     Examples:
         >>> is_valid_url('https://telegraph.co.uk')
@@ -85,11 +116,19 @@ def is_valid_url(url: str) -> bool:
     if not url or not isinstance(url, str):
         return False
 
+    url = url.strip()
+    if not url:
+        return False
+
     if len(url) > MAX_URL_LENGTH:
         return False
 
+    # Отклоняем запрещённые схемы до _ensure_scheme
+    if _has_rejected_scheme(url):
+        return False
+
     if '.' not in url and not url.startswith(
-        ('http://', 'https://')
+        ('http://', 'https://'),
     ):
         return False
 
@@ -98,10 +137,15 @@ def is_valid_url(url: str) -> bool:
     except ValueError:
         return False
 
-    return bool(
-        parsed.scheme in VALID_URL_SCHEMES
-        and parsed.netloc
-    )
+    if parsed.scheme not in VALID_URL_SCHEMES:
+        return False
+
+    # Домен должен содержать точку
+    netloc = parsed.netloc.lower().strip()
+    if '.' not in netloc:
+        return False
+
+    return True
 
 
 def normalize_url(url: str) -> str:
@@ -145,7 +189,7 @@ def normalize_url(url: str) -> str:
 
 
 def get_url_hash(url: str) -> str:
-    """Создать стабильный SHA-256 хеш для кеширования.
+    """Создать стабильный SHA-256 хеш.
 
     Нормализует URL перед хешированием, чтобы
     одна и та же статья всегда получала один хеш.
@@ -165,15 +209,12 @@ def get_url_hash(url: str) -> str:
         return ''
 
     return hashlib.sha256(
-        normalized.encode('utf-8')
+        normalized.encode('utf-8'),
     ).hexdigest()
 
 
 def is_same_domain(url1: str, url2: str) -> bool:
     """Проверить, принадлежат ли URL одному домену.
-
-    Полезно для управления сессиями:
-    один сайт = одна сессия.
 
     Args:
         url1: Первый URL.
@@ -193,7 +234,9 @@ def is_same_domain(url1: str, url2: str) -> bool:
     domain2 = extract_domain(url2)
 
     return bool(
-        domain1 and domain2 and domain1 == domain2
+        domain1
+        and domain2
+        and domain1 == domain2
     )
 
 
@@ -229,7 +272,7 @@ def clean_url(url: str) -> str:
 
     Удаляет UTM-метки, fbclid, gclid и другие
     трекинговые параметры. Сохраняет остальные
-    query params и параметры без значений.
+    query params.
 
     Args:
         url: URL с возможными трекинговыми параметрами.
@@ -239,9 +282,9 @@ def clean_url(url: str) -> str:
 
     Examples:
         >>> clean_url(
-        ...     'https://site.com/?utm_source=fb&id=123'
+        ...     'https://site.com/?utm_source=fb&id=1'
         ... )
-        'https://site.com/?id=123'
+        'https://site.com/?id=1'
     """
     if not url or not is_valid_url(url):
         return ''
@@ -254,7 +297,6 @@ def clean_url(url: str) -> str:
             f'{parsed.path}'
         )
 
-    # parse_qs корректно обрабатывает edge cases
     params = parse_qs(
         parsed.query, keep_blank_values=True,
     )

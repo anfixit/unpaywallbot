@@ -1,0 +1,106 @@
+# .github/workflows/deploy.yml
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ──────────────────────────────────────────────
+  # 1. Тесты — запускаются на каждый push и PR
+  # ──────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    env:
+      # Тестовые значения — не настоящие секреты
+      BOT_TOKEN: "123456789:AABBCCDDEEFFaabbccddeeff-1234567890"
+      ENCRYPTION_KEY: "test-encryption-key-32-chars!!"
+      REDIS_URL: "redis://localhost:6379/0"
+      ALLOWED_USERS: ""
+      ENV: "testing"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Install Playwright
+        run: uv run playwright install --with-deps chromium
+
+      - name: Lint (ruff)
+        run: uv run ruff check bot/
+
+      - name: Type check (mypy)
+        run: uv run mypy bot/ --ignore-missing-imports
+        continue-on-error: true # не блокирует деплой
+
+      - name: Run tests
+        run: uv run pytest --tb=short -q
+
+  # ──────────────────────────────────────────────
+  # 2. Деплой — только при push в main + тесты ОК
+  # ──────────────────────────────────────────────
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            cd ${{ secrets.DEPLOY_PATH }}
+
+            # Обновляем код
+            git pull origin main
+
+            # Записываем .env из GitHub Secrets
+            cat > .env.production << 'ENVEOF'
+            BOT_TOKEN=${{ secrets.BOT_TOKEN }}
+            ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
+            REDIS_URL=redis://localhost:6379/0
+            ALLOWED_USERS=${{ secrets.ALLOWED_USERS }}
+            LOG_LEVEL=INFO
+            ENV=production
+            ENVEOF
+
+            chmod 600 .env.production
+
+            # Обновляем зависимости
+            uv sync --no-dev
+
+            # Playwright (если используются headless-методы)
+            uv run playwright install --with-deps chromium
+
+            # Перезапускаем бота
+            sudo systemctl restart unpaywallbot
+            sleep 3
+            sudo systemctl is-active unpaywallbot

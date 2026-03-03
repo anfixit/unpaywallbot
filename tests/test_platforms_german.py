@@ -1,12 +1,15 @@
 """Тесты для немецкой платформы."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from bot.constants import PaywallType
+from bot.models.article import Article
 from bot.models.paywall_info import PaywallInfo
-from bot.services.platforms.german_freemium import GermanFreemiumPlatform
+from bot.services.platforms.german_freemium import (
+    GermanFreemiumPlatform,
+)
 
 
 @pytest.fixture
@@ -26,37 +29,55 @@ def paywall_info():
 
 
 @pytest.mark.asyncio
-async def test_german_platform_open_article(platform, paywall_info):
-    """Открытая статья (без премиум-маркеров) идёт через js_disable."""
-    with patch('bot.services.platforms.german_freemium.fetch_via_js_disable') as mock_js:
-        mock_js.return_value = Mock(spec=Article)
-
+async def test_german_platform_open_article(
+    platform,
+    paywall_info,
+) -> None:
+    """Открытая статья через js_disable."""
+    with patch(
+        'bot.services.platforms.german_freemium'
+        '.fetch_via_js_disable',
+        new_callable=AsyncMock,
+        return_value=Article(
+            url='https://spiegel.de/kultur/artikel',
+            content='Open content',
+        ),
+    ) as mock_js:
         result = await platform.handle(
             'https://www.spiegel.de/kultur/artikel',
             paywall_info,
         )
 
-        assert result is not None
-        mock_js.assert_called_once()
+    assert result is not None
+    mock_js.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_german_platform_premium_article(platform, paywall_info):
+async def test_german_platform_premium_article(
+    platform,
+    paywall_info,
+) -> None:
     """Премиум-статья пробует headless."""
-    with patch('bot.services.platforms.german_freemium.fetch_via_headless_auth') as mock_headless:
-        mock_headless.return_value = Mock(spec=Article)
-
+    with patch(
+        'bot.services.platforms.german_freemium'
+        '.fetch_via_headless_auth',
+        new_callable=AsyncMock,
+        return_value=Article(
+            url='https://spiegel.de/plus/artikel',
+            content='Premium content',
+        ),
+    ) as mock_headless:
         result = await platform.handle(
             'https://www.spiegel.de/plus/artikel',
             paywall_info,
             user_id=123,
         )
 
-        assert result is not None
-        mock_headless.assert_called_once()
+    assert result is not None
+    mock_headless.assert_called_once()
 
 
-def test_check_if_premium(platform):
+def test_check_if_premium(platform) -> None:
     """Проверка определения премиум-контента."""
     assert platform._check_if_premium(
         'https://www.spiegel.de/plus/artikel',

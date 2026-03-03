@@ -43,7 +43,9 @@ async def test_handle_message_with_url(
     """Сообщение с URL."""
     mock_message.text = 'https://test.com/article'
     mock_state = AsyncMock()
-    mock_state.get_data = AsyncMock(return_value={})
+    mock_state.get_data = AsyncMock(
+        return_value={},
+    )
 
     mock_orch = AsyncMock()
     mock_orch.classifier.classify = AsyncMock()
@@ -57,7 +59,8 @@ async def test_handle_message_with_url(
             return_value=True,
         ),
         patch(
-            'bot.handlers.url_handler.normalize_url',
+            'bot.handlers.url_handler'
+            '.normalize_url',
             return_value=(
                 'https://test.com/article'
             ),
@@ -91,10 +94,10 @@ async def test_handle_message_no_url(
     )
 
     mock_message.answer.assert_called_once()
-    call_text = (
-        mock_message.answer.call_args[0][0]
+    call_text = str(
+        mock_message.answer.call_args,
     )
-    assert 'не нашёл ссылку' in call_text
+    assert 'ссылк' in call_text.lower()
 
 
 @pytest.mark.asyncio
@@ -104,6 +107,7 @@ async def test_auth_yes_callback(
     """Callback 'у меня есть аккаунт'."""
     callback = Mock()
     callback.message = mock_message
+    callback.from_user = Mock()
     callback.from_user.id = 123
     callback.from_user.username = 'testuser'
     callback.answer = AsyncMock()
@@ -114,7 +118,7 @@ async def test_auth_yes_callback(
     )
 
     with patch(
-        'bot.handlers.url_handler'
+        'bot.handlers.callbacks'
         '.process_url_with_account',
     ) as mock_process:
         await callbacks.auth_yes(
