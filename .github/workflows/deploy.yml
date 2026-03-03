@@ -9,7 +9,7 @@ on:
 
 jobs:
   # ──────────────────────────────────────────────
-  # 1. Тесты — запускаются на каждый push и PR
+  # 1. Тесты
   # ──────────────────────────────────────────────
   test:
     runs-on: ubuntu-latest
@@ -26,7 +26,6 @@ jobs:
           --health-retries 5
 
     env:
-      # Тестовые значения — не настоящие секреты
       BOT_TOKEN: "123456789:AABBCCDDEEFFaabbccddeeff-1234567890"
       ENCRYPTION_KEY: "test-encryption-key-32-chars!!"
       REDIS_URL: "redis://localhost:6379/0"
@@ -60,7 +59,7 @@ jobs:
         run: uv run pytest --tb=short -q
 
   # ──────────────────────────────────────────────
-  # 2. Деплой — только при push в main + тесты ОК
+  # 2. Деплой
   # ──────────────────────────────────────────────
   deploy:
     needs: test
@@ -78,10 +77,14 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -e
+
+            echo "🚀 Переходим в директорию проекта"
             cd ${{ secrets.DEPLOY_PATH }}
 
+            echo "📦 Получаем последние изменения"
             git pull origin main
 
+            echo "🔧 Создаем .env.production"
             cat > .env.production << 'ENVEOF'
             BOT_TOKEN=${{ secrets.BOT_TOKEN }}
             ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
@@ -93,10 +96,17 @@ jobs:
 
             chmod 600 .env.production
 
-            uv sync --no-dev
+            echo "📦 Устанавливаем зависимости (без dev)"
+            /home/deploy/.local/bin/uv sync --no-dev
 
-            uv run playwright install --with-deps chromium
+            echo "🎭 Playwright уже установлен, пропускаем"
+            # Playwright уже установлен вручную на сервере
 
+            echo "🔄 Перезапускаем сервис"
             sudo systemctl restart unpaywallbot
             sleep 3
+
+            echo "✅ Проверяем статус"
             sudo systemctl is-active unpaywallbot
+
+            echo "🎉 Деплой завершен!"
