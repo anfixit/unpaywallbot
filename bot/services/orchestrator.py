@@ -6,7 +6,6 @@
 
 import asyncio
 import logging
-from datetime import UTC, datetime
 
 from bot.auth.account_manager import AccountManager
 from bot.constants import BypassMethod, PaywallType
@@ -60,8 +59,12 @@ class Orchestrator:
     def __init__(
         self,
         classifier: PaywallClassifier | None = None,
-        account_manager: AccountManager | None = None,
-        extractor: ContentExtractor | None = None,
+        account_manager: (
+            AccountManager | None
+        ) = None,
+        extractor: (
+            ContentExtractor | None
+        ) = None,
     ) -> None:
         """Инициализировать оркестратор.
 
@@ -81,16 +84,22 @@ class Orchestrator:
         self.platforms: dict[
             str, PlatformProtocol
         ] = {
-            'german_freemium': GermanFreemiumPlatform(
-                extractor=self.extractor,
-                account_manager=self.account_manager,
+            'german_freemium': (
+                GermanFreemiumPlatform(
+                    extractor=self.extractor,
+                    account_manager=(
+                        self.account_manager
+                    ),
+                )
             ),
             'conde_nast': CondeNastPlatform(
                 extractor=self.extractor,
             ),
             'republic': RepublicPlatform(
                 extractor=self.extractor,
-                account_manager=self.account_manager,
+                account_manager=(
+                    self.account_manager
+                ),
             ),
         }
 
@@ -138,7 +147,8 @@ class Orchestrator:
             # 3. Неизвестный тип → archive.ph
             if not paywall_info.is_known:
                 article = await fetch_via_archive(
-                    url, extractor=self.extractor,
+                    url,
+                    extractor=self.extractor,
                 )
                 return self._complete(
                     request, article,
@@ -204,18 +214,37 @@ class Orchestrator:
         self,
         request: UserRequest,
         article: Article | None,
-        paywall_type: PaywallType | None = None,
+        paywall_type: (
+            PaywallType | None
+        ) = None,
         method: BypassMethod | None = None,
     ) -> UserRequest:
-        """Завершить запрос и закешировать результат."""
-        request.article = article
-        request.success = article is not None
-        request.processed_at = datetime.now(UTC)
+        """Завершить запрос и закешировать результат.
 
+        Делегирует установку временных меток и
+        статуса в request.complete() (DRY).
+        Дополнительно проставляет метаданные
+        на статью и ставит кеширование в фон.
+
+        Args:
+            request: Текущий запрос пользователя.
+            article: Извлечённая статья (или None).
+            paywall_type: Тип paywall (для статьи).
+            method: Метод обхода (для статьи).
+
+        Returns:
+            Тот же request с заполненными полями.
+        """
+        # Проставить метаданные ДО complete(),
+        # чтобы article уже содержал полную
+        # информацию при логировании.
         if article and paywall_type:
             article.paywall_type = paywall_type
         if article and method:
             article.extraction_method = method
+
+        # Делегируем: processed_at, success, article
+        request.complete(article=article)
 
         if article:
             self._schedule_cache(article)
@@ -223,7 +252,9 @@ class Orchestrator:
         return request
 
     @staticmethod
-    def _schedule_cache(article: Article) -> None:
+    def _schedule_cache(
+        article: Article,
+    ) -> None:
         """Поставить кеширование в фон (§17.5).
 
         Храним ссылку на задачу в _background_tasks,
@@ -269,7 +300,10 @@ class Orchestrator:
             )
 
         if method == BypassMethod.HEADLESS_AUTH:
-            if not user_id or not self.account_manager:
+            if (
+                not user_id
+                or not self.account_manager
+            ):
                 return None
             return await fetch_via_headless_auth(
                 url,
