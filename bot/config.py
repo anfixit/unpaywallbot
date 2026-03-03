@@ -9,7 +9,7 @@ SecretStr не попадает в логи при print().
 
 from pathlib import Path
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import (
     BaseSettings,
     SettingsConfigDict,
@@ -20,7 +20,11 @@ __all__ = ['settings']
 
 def _find_env_file() -> str | None:
     """Найти первый существующий .env файл."""
-    for name in ('.env.local', '.env.production', '.env'):
+    for name in (
+        '.env.local',
+        '.env.production',
+        '.env',
+    ):
         if Path(name).exists():
             return name
     return None
@@ -41,7 +45,9 @@ class Settings(BaseSettings):
 
     # Telegram
     bot_token: SecretStr = Field(
-        description='Токен Telegram-бота от BotFather',
+        description=(
+            'Токен Telegram-бота от BotFather'
+        ),
     )
 
     # Redis
@@ -68,6 +74,24 @@ class Settings(BaseSettings):
 
     # Окружение
     env: str = Field(default='development')
+
+    @field_validator('allowed_users', mode='before')
+    @classmethod
+    def parse_allowed_users(
+        cls,
+        value: object,
+    ) -> list[int]:
+        """Обработать пустую строку как пустой список.
+
+        CI/CD может передать ALLOWED_USERS="" — без
+        этого валидатора pydantic-settings вызовет
+        json.loads("") → JSONDecodeError.
+        """
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return []
+        return value  # type: ignore[return-value]
 
     @property
     def is_production(self) -> bool:

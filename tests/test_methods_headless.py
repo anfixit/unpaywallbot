@@ -31,12 +31,16 @@ async def test_headless_auth_success(
 ) -> None:
     """Успешное извлечение через headless."""
     # Мок страницы — обычный Mock, чтобы
-    # set_default_timeout не возвращал корутину
+    # set_default_timeout не возвращал корутину.
+    # url — строка (не Mock), иначе _is_login_page
+    # упадёт с TypeError: 'in' requires str.
     mock_page = Mock()
     mock_page.set_default_timeout = Mock()
+    mock_page.url = 'https://test.com/article'
     mock_page.goto = AsyncMock(
         return_value=Mock(status=200),
     )
+    mock_page.wait_for_selector = AsyncMock()
     mock_page.content = AsyncMock(
         return_value=(
             '<html><body>Content</body></html>'

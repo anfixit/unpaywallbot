@@ -30,7 +30,7 @@ jobs:
       BOT_TOKEN: "123456789:AABBCCDDEEFFaabbccddeeff-1234567890"
       ENCRYPTION_KEY: "test-encryption-key-32-chars!!"
       REDIS_URL: "redis://localhost:6379/0"
-      ALLOWED_USERS: ""
+      ALLOWED_USERS: "[]"
       ENV: "testing"
 
     steps:
@@ -54,7 +54,7 @@ jobs:
 
       - name: Type check (mypy)
         run: uv run mypy bot/ --ignore-missing-imports
-        continue-on-error: true # не блокирует деплой
+        continue-on-error: true
 
       - name: Run tests
         run: uv run pytest --tb=short -q
@@ -65,9 +65,10 @@ jobs:
   deploy:
     needs: test
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
     environment: production
-
     steps:
       - name: Deploy to server
         uses: appleboy/ssh-action@v1
@@ -79,10 +80,8 @@ jobs:
             set -e
             cd ${{ secrets.DEPLOY_PATH }}
 
-            # Обновляем код
             git pull origin main
 
-            # Записываем .env из GitHub Secrets
             cat > .env.production << 'ENVEOF'
             BOT_TOKEN=${{ secrets.BOT_TOKEN }}
             ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
@@ -94,13 +93,10 @@ jobs:
 
             chmod 600 .env.production
 
-            # Обновляем зависимости
             uv sync --no-dev
 
-            # Playwright (если используются headless-методы)
             uv run playwright install --with-deps chromium
 
-            # Перезапускаем бота
             sudo systemctl restart unpaywallbot
             sleep 3
             sudo systemctl is-active unpaywallbot

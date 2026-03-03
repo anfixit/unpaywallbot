@@ -32,7 +32,6 @@ _AUTHOR_PATTERNS: list[str] = [
 ]
 
 _TAG_RE = re.compile(r'<[^>]+>')
-_WHITESPACE_RE = re.compile(r'\s+')
 
 _DEFAULT_MIN_TEXT_LENGTH = 200
 
@@ -42,7 +41,9 @@ class ContentExtractor:
 
     def __init__(
         self,
-        min_text_length: int = _DEFAULT_MIN_TEXT_LENGTH,
+        min_text_length: int = (
+            _DEFAULT_MIN_TEXT_LENGTH
+        ),
     ) -> None:
         """Инициализировать экстрактор.
 
@@ -95,7 +96,11 @@ class ContentExtractor:
                 author=author,
             )
 
-        except (ParserError, ValueError, TypeError):
+        except (
+            ParserError,
+            ValueError,
+            TypeError,
+        ):
             logger.warning(
                 'Ошибка парсинга HTML для %s',
                 url,
@@ -110,7 +115,8 @@ class ContentExtractor:
             html: HTML-код.
 
         Returns:
-            Чистый текст с нормализованными пробелами.
+            Чистый текст с нормализованными
+            пробелами.
         """
         try:
             root = lxml.html.fromstring(html)
@@ -139,7 +145,9 @@ class ContentExtractor:
         return _TAG_RE.sub('', html)
 
     @staticmethod
-    def _extract_author(html: str) -> str | None:
+    def _extract_author(
+        html: str,
+    ) -> str | None:
         """Извлечь имя автора из HTML.
 
         Args:

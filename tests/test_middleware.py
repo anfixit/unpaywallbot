@@ -51,9 +51,14 @@ async def test_rate_limiter_allowed(
     mock_redis.client.get = AsyncMock(
         return_value='5',
     )
-    mock_pipe = AsyncMock()
-    mock_pipe.incr = AsyncMock()
-    mock_pipe.expire = AsyncMock()
+
+    # Pipeline-методы вызываются синхронно
+    # в Redis pipeline-контексте, поэтому
+    # используем Mock (не AsyncMock), чтобы
+    # не генерировать неожиданные корутины.
+    mock_pipe = Mock()
+    mock_pipe.incr = Mock()
+    mock_pipe.expire = Mock()
     mock_pipe.execute = AsyncMock()
     mock_redis.client.pipeline = Mock(
         return_value=mock_pipe,
