@@ -7,7 +7,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Tests](https://img.shields.io/badge/tests-pytest-orange.svg)](https://docs.pytest.org/)
 
-**Pet - роект по информационной безопасности**
+**Дипломный проект по информационной безопасности**
 Автор: [anfixit](https://github.com/anfixit)
 
 ---
@@ -117,13 +117,173 @@ docker compose logs -f bot
 | `BOT_TOKEN` | да | Токен Telegram-бота от BotFather |
 | `ENCRYPTION_KEY` | да | Ключ шифрования сессий (мин. 16 символов) |
 | `REDIS_URL` | нет | URL Redis (по умолчанию `redis://localhost:6379/0`) |
-| `ALLOWED_USERS` | нет | Whitelist Telegram user_id через запятую |
+| `ALLOWED_USERS` | нет | Whitelist Telegram user_id в формате JSON-массива (`[123, 456]`) |
 | `LOG_LEVEL` | нет | Уровень логирования (по умолчанию `INFO`) |
 | `ENV` | нет | Окружение: `development` или `production` |
 
 ### Конфигурация paywall
 
 Файл `data/paywall_map.yaml` содержит маппинг доменов на типы paywall и методы обхода. Подробности — в комментариях внутри файла.
+
+---
+
+## CI/CD
+
+Проект использует GitHub Actions с многоступенчатым pipeline:
+
+```
+lint ─────────┐
+typecheck ────┤
+test ─────────┼──► docker push ──► deploy ──► telegram notify
+security ─────┘
+```
+
+### Этапы pipeline
+
+| Этап | Инструмент | Описание |
+|------|-----------|----------|
+| Lint | Ruff | Статический анализ кода |
+| Types | mypy | Проверка типизации |
+| Tests | pytest | 99 тестов, coverage ≥ 60% |
+| Security | pip-audit | Аудит зависимостей на CVE (§8.9) |
+| Docker | GHCR | Сборка и push образа в GitHub Container Registry |
+| Deploy | SSH | Обновление кода и перезапуск сервиса на сервере |
+| Notify | Telegram | Уведомление о результате деплоя |
+
+Docker-образ публикуется с двумя тегами: `latest` и SHA коммита (для возможности отката).
+
+### Настройка секретов
+
+GitHub → Settings → Secrets and variables → Actions:
+
+**Environment secrets** (environment `production`):
+
+| Секрет | Описание |
+|--------|----------|
+| `BOT_TOKEN` | Токен Telegram-бота |
+| `ENCRYPTION_KEY` | Ключ шифрования сессий |
+| `ALLOWED_USERS` | JSON-массив разрешённых user_id (`[]` для открытого доступа) |
+| `TELEGRAM_CHAT_ID` | Telegram ID для уведомлений о деплое |
+
+**Repository secrets:**
+
+| Секрет | Описание |
+|--------|----------|
+| `SSH_HOST` | IP-адрес сервера |
+| `SSH_USER` | Пользователь для SSH (`deploy`) |
+| `SSH_PRIVATE_KEY` | Приватный SSH-ключ |
+| `DEPLOY_PATH` | Путь к проекту на сервере |
+
+---
+
+## Деплой на сервер
+
+### Подготовка сервера
+
+#### 1. Пользователь и SSH
+
+```bash
+# Создать пользователя deploy
+sudo adduser deploy
+sudo usermod -aG sudo deploy
+
+# Настроить SSH-ключи
+su - deploy
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+# Добавить публичный ключ в ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+```
+
+#### 2. Системные зависимости
+
+```bash
+sudo apt update && sudo apt install -y \
+    python3.12 python3.12-venv \
+    git curl redis-server
+```
+
+#### 3. Установка uv
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+#### 4. Структура проекта
+
+```bash
+sudo mkdir -p /opt/projects/unpaywallbot
+sudo chown deploy:deploy /opt/projects/unpaywallbot
+sudo mkdir -p /var/log/unpaywallbot
+sudo chown deploy:deploy /var/log/unpaywallbot
+
+cd /opt/projects
+git clone git@github.com:anfixit/unpaywallbot.git
+cd unpaywallbot
+uv sync --no-dev
+uv run playwright install --with-deps chromium
+```
+
+#### 5. Systemd-сервис
+
+Создать `/etc/systemd/system/unpaywallbot.service`:
+
+```ini
+[Unit]
+Description=Unpaywall Bot
+After=network.target redis-server.service
+Wants=redis-server.service
+
+[Service]
+User=deploy
+WorkingDirectory=/opt/projects/unpaywallbot
+ExecStart=/home/deploy/.local/bin/uv run python -m bot.main
+Restart=always
+StandardOutput=append:/var/log/unpaywallbot/out.log
+StandardError=append:/var/log/unpaywallbot/err.log
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable unpaywallbot
+sudo systemctl start unpaywallbot
+```
+
+#### 6. Sudo без пароля (только для CI/CD)
+
+Создать `/etc/sudoers.d/deploy`:
+
+```
+deploy ALL=(ALL) NOPASSWD: \
+    /usr/bin/systemctl restart unpaywallbot, \
+    /usr/bin/systemctl is-active unpaywallbot, \
+    /usr/bin/systemctl is-active --quiet unpaywallbot, \
+    /usr/bin/systemctl status unpaywallbot --no-pager, \
+    /usr/bin/journalctl -u unpaywallbot -n 30 --no-pager
+```
+
+#### 7. Redis
+
+```bash
+sudo systemctl enable redis-server
+sudo systemctl start redis-server
+redis-cli ping  # → PONG
+```
+
+### Ручной деплой
+
+```bash
+ssh deploy@<server-ip>
+cd /opt/projects/unpaywallbot
+git pull origin main
+uv sync --no-dev
+sudo systemctl restart unpaywallbot
+sudo systemctl status unpaywallbot
+```
+
+При push в `main` деплой происходит автоматически через GitHub Actions.
 
 ---
 
@@ -221,6 +381,7 @@ unpaywallbot/
 ├── scripts/                    # CLI-утилиты
 ├── tests/                      # Тесты (pytest)
 ├── notebooks/                  # Jupyter для анализа
+├── .github/workflows/          # CI/CD pipeline
 ├── docker-compose.yml
 ├── Dockerfile
 └── pyproject.toml
@@ -245,6 +406,8 @@ unpaywallbot/
 | Типизация | mypy (strict) |
 | Пакетный менеджер | uv |
 | Контейнеризация | Docker, Docker Compose |
+| CI/CD | GitHub Actions, GHCR |
+| Деплой | systemd, SSH |
 
 ---
 
@@ -265,13 +428,13 @@ unpaywallbot/
 
 Распространяется под лицензией [GNU Affero General Public License v3.0](LICENSE)
 
-Код предоставляется исключительно в образовательных целях.
+Код предоставляется исключительно в исследовательских и образовательных целях.
 
 ---
 
 ## Дисклеймер
 
-> Данный инструмент создан **исключительно для образовательных целей** и авторизованного тестирования безопасности. Автор не несёт ответственности за любое незаконное использование. Перед использованием убедитесь, что ваши действия не нарушают законодательство вашей страны и условия использования целевых сайтов.
+> Данный инструмент создан **исключительно для исследовательских целей** и авторизованного тестирования безопасности. Автор не несёт ответственности за любое незаконное использование. Перед использованием убедитесь, что ваши действия не нарушают законодательство вашей страны и условия использования целевых сайтов.
 
 ---
 
