@@ -4,6 +4,7 @@
 выделения заголовка, автора и текста.
 """
 
+import logging
 import re
 
 import lxml.html
@@ -15,11 +16,17 @@ from bot.utils.url_utils import normalize_url
 
 __all__ = ['ContentExtractor']
 
+logger = logging.getLogger(__name__)
+
 _AUTHOR_PATTERNS: list[str] = [
-    r'<meta[^>]+name="author"'
-    r'[^>]+content="([^"]+)"',
-    r'<meta[^>]+property="article:author"'
-    r'[^>]+content="([^"]+)"',
+    (
+        r'<meta[^>]+name="author"'
+        r'[^>]+content="([^"]+)"'
+    ),
+    (
+        r'<meta[^>]+property="article:author"'
+        r'[^>]+content="([^"]+)"'
+    ),
     r'class="[^"]*author[^"]*"[^>]*>([^<]+)',
     r'class="[^"]*byline[^"]*"[^>]*>([^<]+)',
 ]
@@ -27,13 +34,15 @@ _AUTHOR_PATTERNS: list[str] = [
 _TAG_RE = re.compile(r'<[^>]+>')
 _WHITESPACE_RE = re.compile(r'\s+')
 
+_DEFAULT_MIN_TEXT_LENGTH = 200
+
 
 class ContentExtractor:
     """Извлекает читаемый контент из HTML."""
 
     def __init__(
         self,
-        min_text_length: int = 200,
+        min_text_length: int = _DEFAULT_MIN_TEXT_LENGTH,
     ) -> None:
         """Инициализировать экстрактор.
 
@@ -68,6 +77,13 @@ class ContentExtractor:
             text = self._html_to_text(content_html)
 
             if len(text) < self.min_text_length:
+                logger.debug(
+                    'Текст слишком короткий '
+                    '(%d < %d) для %s',
+                    len(text),
+                    self.min_text_length,
+                    url,
+                )
                 return None
 
             author = self._extract_author(html)
@@ -80,6 +96,11 @@ class ContentExtractor:
             )
 
         except (ParserError, ValueError, TypeError):
+            logger.warning(
+                'Ошибка парсинга HTML для %s',
+                url,
+                exc_info=True,
+            )
             return None
 
     def _html_to_text(self, html: str) -> str:
@@ -115,16 +136,14 @@ class ContentExtractor:
     @staticmethod
     def _strip_tags(html: str) -> str:
         """Удалить HTML-теги (запасной метод)."""
-        text = _TAG_RE.sub(' ', html)
-        text = _WHITESPACE_RE.sub(' ', text)
-        return text.strip()
+        return _TAG_RE.sub('', html)
 
     @staticmethod
     def _extract_author(html: str) -> str | None:
-        """Извлечь автора из HTML.
+        """Извлечь имя автора из HTML.
 
         Args:
-            html: HTML-код страницы.
+            html: Полный HTML страницы.
 
         Returns:
             Имя автора или None.
@@ -134,6 +153,7 @@ class ContentExtractor:
                 pattern, html, re.IGNORECASE,
             )
             if match:
-                return match.group(1).strip()
-
+                author = match.group(1).strip()
+                if author:
+                    return author
         return None

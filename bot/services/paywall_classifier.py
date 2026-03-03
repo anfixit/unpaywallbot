@@ -4,6 +4,8 @@
 и определяет тип paywall для переданного URL.
 """
 
+import asyncio
+import logging
 from pathlib import Path
 from typing import Final
 
@@ -14,6 +16,8 @@ from bot.models.paywall_info import PaywallInfo
 from bot.utils.url_utils import extract_domain
 
 __all__ = ['PaywallClassifier']
+
+logger = logging.getLogger(__name__)
 
 CONFIG_PATH: Final[Path] = (
     Path(__file__).parent.parent.parent
@@ -49,10 +53,11 @@ class PaywallClassifier:
     def _load_config(self) -> None:
         """Загрузить и распарсить YAML."""
         if not self.config_path.exists():
-            raise FileNotFoundError(
+            msg = (
                 'Конфиг paywall не найден: '
-                f'{self.config_path}',
+                f'{self.config_path}'
             )
+            raise FileNotFoundError(msg)
 
         with open(
             self.config_path, encoding='utf-8',
@@ -60,13 +65,18 @@ class PaywallClassifier:
             raw_config = yaml.safe_load(f)
 
         if not isinstance(raw_config, dict):
-            raise ValueError(
+            msg = (
                 'Неверный формат конфига: '
                 f'ожидался dict, получен '
-                f'{type(raw_config).__name__}',
+                f'{type(raw_config).__name__}'
             )
+            raise ValueError(msg)
 
         self._domain_map = raw_config
+        logger.info(
+            'Загружено %d доменов из конфига',
+            len(self._domain_map),
+        )
 
     def _match_domain(
         self,
@@ -128,7 +138,7 @@ class PaywallClassifier:
         if not match:
             return PaywallInfo.unknown(url)
 
-        domain_key, config = match
+        _domain_key, config = match
 
         paywall_type = self._parse_paywall_type(
             config.get('type', 'unknown'),
@@ -162,5 +172,12 @@ class PaywallClassifier:
         )
 
     def reload(self) -> None:
-        """Перезагрузить конфигурацию."""
+        """Перезагрузить конфигурацию (синхронно)."""
         self._load_config()
+
+    async def reload_async(self) -> None:
+        """Перезагрузить конфигурацию (async-safe).
+
+        Файловый I/O через to_thread (§17.1).
+        """
+        await asyncio.to_thread(self._load_config)

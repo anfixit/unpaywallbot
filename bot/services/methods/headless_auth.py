@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import logging
 
 from playwright.async_api import (
     Page,
@@ -15,7 +16,10 @@ from playwright.async_api import (
     TimeoutError as PlaywrightTimeout,
 )
 
-from bot.auth.account_manager import AccountManager
+from bot.auth.account_manager import (
+    Account,
+    AccountManager,
+)
 from bot.models.article import Article
 from bot.services.content_extractor import (
     ContentExtractor,
@@ -23,6 +27,8 @@ from bot.services.content_extractor import (
 from bot.utils.url_utils import normalize_url
 
 __all__ = ['fetch_via_headless_auth']
+
+logger = logging.getLogger(__name__)
 
 _BROWSER_TIMEOUT = 30_000
 _NAVIGATION_TIMEOUT = 30_000
@@ -65,13 +71,14 @@ async def fetch_via_headless_auth(
     if not norm_url:
         return None
 
-    account = await account_manager.get_account_for_url(
-        norm_url, user_id,
+    account = (
+        await account_manager.get_account_for_url(
+            norm_url, user_id,
+        )
     )
     if not account:
-        raise RuntimeError(
-            f'Нет аккаунта для {norm_url}',
-        )
+        msg = f'Нет аккаунта для {norm_url}'
+        raise RuntimeError(msg)
 
     if extractor is None:
         extractor = ContentExtractor()
@@ -117,10 +124,15 @@ async def fetch_via_headless_auth(
                 response.status if response
                 else 'unknown'
             )
-            raise RuntimeError(f'HTTP {status}')
+            msg = f'HTTP {status}'
+            raise RuntimeError(msg)
 
         # Проверяем, не выкинуло ли на логин
         if _is_login_page(page.url):
+            logger.info(
+                'Редирект на логин для %s',
+                norm_url,
+            )
             await _handle_login(page, account)
             await page.goto(
                 norm_url,
@@ -133,10 +145,16 @@ async def fetch_via_headless_auth(
                 timeout=_CONTENT_WAIT_TIMEOUT,
             )
         except PlaywrightTimeout:
+            logger.debug(
+                'Контент-селектор не найден '
+                'за %dms, ждём fallback',
+                _CONTENT_WAIT_TIMEOUT,
+            )
             await asyncio.sleep(_FALLBACK_WAIT)
 
         html = await page.content()
 
+        # Обновляем cookies для следующего раза
         account.session_cookies = (
             await context.cookies()
         )
@@ -154,16 +172,16 @@ async def fetch_via_headless_auth(
 
 
 def _is_login_page(url: str) -> bool:
-    """Проверить, является ли URL страницей логина."""
+    """Проверить, является ли URL логин-страницей."""
     lower = url.lower()
     return 'login' in lower or 'signin' in lower
 
 
 async def _handle_login(
     page: Page,
-    account: object,
+    account: Account,
 ) -> None:
-    """Обработать логин.
+    """Обработать логин на странице.
 
     Args:
         page: Страница браузера.

@@ -5,6 +5,7 @@
 заголовки Googlebot.
 """
 
+import logging
 import random
 
 import httpx
@@ -20,6 +21,8 @@ from bot.services.content_extractor import (
 from bot.utils.url_utils import normalize_url
 
 __all__ = ['fetch_via_googlebot_spoof']
+
+logger = logging.getLogger(__name__)
 
 _GOOGLEBOT_USER_AGENTS = [
     (
@@ -86,7 +89,7 @@ async def fetch_via_googlebot_spoof(
         extractor = ContentExtractor()
 
     try:
-        for _ in range(MAX_RETRY_COUNT):
+        for attempt in range(MAX_RETRY_COUNT):
             headers = _get_random_googlebot_headers()
 
             response = await client.get(
@@ -106,6 +109,14 @@ async def fetch_via_googlebot_spoof(
 
             # 403/429 — нас раскусили, пробуем ещё
             if response.status_code in (403, 429):
+                logger.debug(
+                    'Googlebot spoof %s: %d '
+                    '(попытка %d/%d)',
+                    norm_url,
+                    response.status_code,
+                    attempt + 1,
+                    MAX_RETRY_COUNT,
+                )
                 continue
 
             response.raise_for_status()

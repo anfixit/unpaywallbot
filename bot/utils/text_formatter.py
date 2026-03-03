@@ -12,8 +12,8 @@ from bot.constants import MAX_MESSAGE_LENGTH
 
 __all__ = [
     'split_into_chunks',
-    'truncate_with_ellipsis',
     'strip_markdown',
+    'truncate_with_ellipsis',
 ]
 
 # Границы для разбиения (в порядке приоритета)
@@ -27,23 +27,32 @@ _CHUNK_BOUNDARIES: Final[list[str]] = [
     ' ',     # слова
 ]
 
+# Порог «достаточно близко к концу» для поиска
+# пробела при обрезке слова (80% от позиции среза)
+_WORD_BREAK_RATIO = 0.8
 
-def split_into_chunks(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> list[str]:
+
+def split_into_chunks(
+    text: str,
+    max_length: int = MAX_MESSAGE_LENGTH,
+) -> list[str]:
     """Разбить текст на части для Telegram.
 
-    Старается разбивать по границам (абзацы → строки → предложения → слова),
+    Старается разбивать по границам
+    (абзацы → строки → предложения → слова),
     чтобы не обрывать текст на полуслове.
 
     Args:
         text: Исходный текст.
-        max_length: Максимальная длина одной части (обычно 4096).
+        max_length: Максимальная длина одной части.
 
     Returns:
-        Список частей текста. Пустой список, если текст пустой.
+        Список частей текста.
+        Пустой список, если текст пустой.
 
     Examples:
-        >>> split_into_chunks('A' * 5000)  # 2 части
-        ['A' * 4096, 'A' * 904]
+        >>> len(split_into_chunks('A' * 5000))
+        2
     """
     if not text:
         return []
@@ -51,7 +60,7 @@ def split_into_chunks(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> list[s
     if len(text) <= max_length:
         return [text]
 
-    chunks = []
+    chunks: list[str] = []
     remaining = text
 
     while remaining:
@@ -59,79 +68,81 @@ def split_into_chunks(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> list[s
             chunks.append(remaining)
             break
 
-        # Ищем место для разрыва
-        split_at = _find_split_position(remaining, max_length)
-
+        split_at = _find_split_position(
+            remaining, max_length,
+        )
         chunks.append(remaining[:split_at])
         remaining = remaining[split_at:].lstrip()
 
     return chunks
 
 
-def _find_split_position(text: str, max_length: int) -> int:
+def _find_split_position(
+    text: str,
+    max_length: int,
+) -> int:
     """Найти позицию для разрыва внутри лимита.
 
     Перебирает границы в порядке приоритета:
     абзацы → строки → предложения → слова.
-    Если ничего не найдено — режет ровно по max_length.
+    Если ничего не найдено — режет по max_length.
 
     Args:
         text: Текст, который нужно разбить.
         max_length: Максимальная длина первой части.
 
     Returns:
-        Индекс, по которому можно резать (≤ max_length).
+        Индекс, по которому можно резать.
     """
     if len(text) <= max_length:
         return len(text)
 
-    # Ищем границу в пределах max_length
     search_area = text[:max_length]
 
     for boundary in _CHUNK_BOUNDARIES:
         pos = search_area.rfind(boundary)
         if pos != -1:
-            # Возвращаем позицию + длину разделителя
             return pos + len(boundary)
 
-    # Если нет подходящих границ — режем по слову
     last_space = search_area.rfind(' ')
     if last_space != -1:
         return last_space + 1
 
-    # Хуже некуда — режем ровно по лимиту
     return max_length
 
 
-def truncate_with_ellipsis(text: str, max_length: int = 300) -> str:
-    """Обрезать текст до указанной длины, добавив '...'.
+def truncate_with_ellipsis(
+    text: str,
+    max_length: int = 300,
+) -> str:
+    """Обрезать текст до указанной длины с '...'.
 
     Используется для превью и логов.
 
     Args:
         text: Исходный текст.
-        max_length: Максимальная длина (с учётом '...').
+        max_length: Максимальная длина (с '...').
 
     Returns:
         Обрезанный текст с '...' в конце.
 
     Examples:
         >>> truncate_with_ellipsis('Длинный текст', 10)
-        'Длинный ...'
+        'Длинный...'
     """
     if len(text) <= max_length:
         return text
 
-    # Оставляем место для '...'
     cut_at = max_length - 3
     if cut_at <= 0:
         return '...'
 
-    # Стараемся не резать слово
     truncated = text[:cut_at]
     last_space = truncated.rfind(' ')
 
-    if last_space > cut_at * 0.8:  # если нашли пробел достаточно близко к концу
+    # Если пробел достаточно близко к концу —
+    # режем по слову, а не по символу
+    if last_space > cut_at * _WORD_BREAK_RATIO:
         return truncated[:last_space] + '...'
 
     return truncated + '...'
@@ -152,19 +163,17 @@ def strip_markdown(text: str) -> str:
         >>> strip_markdown('**bold** *italic* [link](url)')
         'bold italic link'
     """
-    # Удаляем ссылки [text](url) -> text
-    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
-
-    # Удаляем **жирный**
+    # Ссылки [text](url) → text
+    text = re.sub(
+        r'\[([^\]]+)\]\([^)]+\)', r'\1', text,
+    )
+    # **жирный**
     text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
-
-    # Удаляем *курсив*
+    # *курсив*
     text = re.sub(r'\*([^*]+)\*', r'\1', text)
-
-    # Удаляем `код`
+    # `код`
     text = re.sub(r'`([^`]+)`', r'\1', text)
-
-    # Удаляем __подчёркнутый__
+    # __подчёркнутый__
     text = re.sub(r'__([^_]+)__', r'\1', text)
 
     return text.strip()

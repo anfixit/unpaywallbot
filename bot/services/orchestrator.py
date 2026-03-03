@@ -4,8 +4,9 @@
 обхода, кеш, экстрактор и менеджер аккаунтов.
 """
 
+import asyncio
+import logging
 from datetime import UTC, datetime
-from typing import Any
 
 from bot.auth.account_manager import AccountManager
 from bot.constants import BypassMethod, PaywallType
@@ -38,15 +39,19 @@ from bot.services.platforms.german_freemium import (
 from bot.services.platforms.republic import (
     RepublicPlatform,
 )
+from bot.services.protocols import PlatformProtocol
 from bot.storage.cache import (
     get_cached_article,
     save_article_to_cache,
 )
-from bot.utils.logger import setup_logger
 
 __all__ = ['Orchestrator']
 
-logger = setup_logger(__name__)
+logger = logging.getLogger(__name__)
+
+# Множество для хранения ссылок на фоновые задачи.
+# Предотвращает сборку GC до завершения (§17.5).
+_background_tasks: set[asyncio.Task] = set()
 
 
 class Orchestrator:
@@ -73,7 +78,9 @@ class Orchestrator:
             extractor or ContentExtractor()
         )
 
-        self.platforms: dict[str, Any] = {
+        self.platforms: dict[
+            str, PlatformProtocol
+        ] = {
             'german_freemium': GermanFreemiumPlatform(
                 extractor=self.extractor,
                 account_manager=self.account_manager,
@@ -114,7 +121,9 @@ class Orchestrator:
         try:
             # 1. Кеш
             if not skip_cache:
-                cached = await get_cached_article(url)
+                cached = await get_cached_article(
+                    url,
+                )
                 if cached:
                     return self._complete(
                         request, cached,
@@ -143,9 +152,13 @@ class Orchestrator:
                 platform_name
                 and platform_name in self.platforms
             ):
-                platform = self.platforms[platform_name]
+                platform = self.platforms[
+                    platform_name
+                ]
                 article = await platform.handle(
-                    url, paywall_info, user_id=user_id,
+                    url,
+                    paywall_info,
+                    user_id=user_id,
                 )
                 return self._complete(
                     request, article,
@@ -155,10 +168,12 @@ class Orchestrator:
 
             # 5. Есть метод → используем
             if paywall_info.suggested_method:
-                article = await self._fetch_with_method(
-                    url,
-                    paywall_info.suggested_method,
-                    user_id,
+                article = (
+                    await self._fetch_with_method(
+                        url,
+                        paywall_info.suggested_method,
+                        user_id,
+                    )
                 )
                 return self._complete(
                     request, article,
@@ -201,15 +216,26 @@ class Orchestrator:
             article.paywall_type = paywall_type
         if article and method:
             article.extraction_method = method
+
         if article:
-            # Не ждём — fire and forget в продакшне
-            # но здесь для простоты ждём
-            import asyncio
-            asyncio.ensure_future(
-                save_article_to_cache(article),
-            )
+            self._schedule_cache(article)
 
         return request
+
+    @staticmethod
+    def _schedule_cache(article: Article) -> None:
+        """Поставить кеширование в фон (§17.5).
+
+        Храним ссылку на задачу в _background_tasks,
+        чтобы GC не собрал её до завершения.
+        """
+        task = asyncio.create_task(
+            save_article_to_cache(article),
+        )
+        _background_tasks.add(task)
+        task.add_done_callback(
+            _background_tasks.discard,
+        )
 
     async def _fetch_with_method(
         self,
@@ -248,7 +274,9 @@ class Orchestrator:
             return await fetch_via_headless_auth(
                 url,
                 user_id=user_id,
-                account_manager=self.account_manager,
+                account_manager=(
+                    self.account_manager
+                ),
                 extractor=self.extractor,
             )
 

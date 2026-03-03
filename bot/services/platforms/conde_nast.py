@@ -35,6 +35,7 @@ class CondeNastPlatform:
         self,
         url: str,
         paywall_info: PaywallInfo,
+        *,
         user_id: int | None = None,
     ) -> Article | None:
         """Обработать URL Condé Nast.

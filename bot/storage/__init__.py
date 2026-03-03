@@ -1,8 +1,8 @@
 """Кеширование и хранение данных.
 
 Содержит:
-- redis_client - подключение к Redis
-- cache - функции кеширования статей
+- redis_client — подключение к Redis (lazy singleton)
+- cache — функции кеширования статей
 """
 
 from bot.storage.cache import (
@@ -11,13 +11,16 @@ from bot.storage.cache import (
     invalidate_article_cache,
     save_article_to_cache,
 )
-from bot.storage.redis_client import RedisClient, redis_client
+from bot.storage.redis_client import (
+    RedisClient,
+    get_redis_client,
+)
 
 __all__ = [
     'RedisClient',
-    'redis_client',
     'get_cached_article',
-    'save_article_to_cache',
-    'invalidate_article_cache',
     'get_cache_stats',
+    'get_redis_client',
+    'invalidate_article_cache',
+    'save_article_to_cache',
 ]

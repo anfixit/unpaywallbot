@@ -35,6 +35,7 @@ class RepublicPlatform:
         self,
         url: str,
         paywall_info: PaywallInfo,
+        *,
         user_id: int | None = None,
     ) -> Article | None:
         """Обработать URL Republic.io.
@@ -51,15 +52,15 @@ class RepublicPlatform:
             RuntimeError: Нет user_id или менеджера.
         """
         if not user_id:
-            raise RuntimeError(
-                'Republic.io требует user_id',
-            )
+            msg = 'Republic.io требует user_id'
+            raise RuntimeError(msg)
 
         if not self.account_manager:
-            raise RuntimeError(
+            msg = (
                 'Republic.io требует '
-                'account_manager',
+                'account_manager'
             )
+            raise RuntimeError(msg)
 
         return await fetch_via_headless_auth(
             url,

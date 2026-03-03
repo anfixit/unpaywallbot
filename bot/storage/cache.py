@@ -1,56 +1,91 @@
 """Кеширование статей в Redis.
 
-Сохраняет извлечённые статьи, чтобы не долбить сайты повторно.
-Ключи: article:{url_hash} -> JSON с данными статьи.
+Сохраняет извлечённые статьи, чтобы не долбить
+сайты повторно.
+Ключи: article:{url_hash} → JSON с данными статьи.
 """
 
 import json
-from datetime import datetime
+import logging
+from datetime import UTC, datetime
 
 from bot.constants import CACHE_TTL_LONG
 from bot.models.article import Article
-from bot.storage.redis_client import redis_client
+from bot.storage.redis_client import get_redis_client
 from bot.utils.url_utils import get_url_hash
 
 __all__ = [
-    'get_cached_article',
-    'save_article_to_cache',
-    'invalidate_article_cache',
     'get_cache_stats',
+    'get_cached_article',
+    'invalidate_article_cache',
+    'save_article_to_cache',
 ]
 
+logger = logging.getLogger(__name__)
 
-async def get_cached_article(url: str) -> Article | None:
+_KEY_PREFIX = 'article'
+
+
+def _article_key(url_hash: str) -> str:
+    """Сформировать Redis-ключ для статьи."""
+    return f'{_KEY_PREFIX}:{url_hash}'
+
+
+async def get_cached_article(
+    url: str,
+) -> Article | None:
     """Получить статью из кеша по URL.
 
     Args:
         url: URL статьи.
 
     Returns:
-        Article или None, если статьи нет в кеше.
+        Article или None, если нет в кеше.
     """
     url_hash = get_url_hash(url)
     if not url_hash:
         return None
 
-    client = redis_client.client
-    data = await client.get(f'article:{url_hash}')
+    client = get_redis_client().client
+    data = await client.get(_article_key(url_hash))
 
     if not data:
         return None
 
     try:
         article_dict = json.loads(data)
-
-        # Конвертируем строку обратно в datetime
-        if 'extracted_at' in article_dict:
-            article_dict['extracted_at'] = datetime.fromisoformat(article_dict['extracted_at'])
-
+        _restore_datetime(article_dict)
         return Article(**article_dict)
 
-    except (json.JSONDecodeError, TypeError, ValueError):
-        # Логирование будет в вызывающем коде
+    except (
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        logger.warning(
+            'Ошибка десериализации кеша для %s: %s',
+            url_hash[:12],
+            exc,
+        )
         return None
+
+
+def _restore_datetime(
+    article_dict: dict,
+) -> None:
+    """Конвертировать ISO-строки обратно в datetime.
+
+    Гарантирует timezone-aware результат (UTC).
+    """
+    for field in ('extracted_at', 'published_at'):
+        raw = article_dict.get(field)
+        if not raw:
+            continue
+        dt = datetime.fromisoformat(raw)
+        # Если naive — считаем UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        article_dict[field] = dt
 
 
 async def save_article_to_cache(
@@ -74,49 +109,78 @@ async def save_article_to_cache(
         return False
 
     try:
-        # Конвертируем в dict для JSON
-        article_dict = {
-            'url': article.url,
-            'content': article.content,
-            'title': article.title,
-            'author': article.author,
-            'published_at': article.published_at.isoformat() if article.published_at else None,
-            'extracted_at': article.extracted_at.isoformat(),
-            'paywall_type': article.paywall_type,
-            'extraction_method': article.extraction_method,
-        }
+        article_dict = _serialize_article(article)
+        client = get_redis_client().client
 
-        client = redis_client.client
         await client.setex(
-            f'article:{url_hash}',
+            _article_key(url_hash),
             ttl,
-            json.dumps(article_dict, ensure_ascii=False),
+            json.dumps(
+                article_dict, ensure_ascii=False,
+            ),
         )
         return True
 
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.warning(
+            'Ошибка сериализации статьи %s: %s',
+            url_hash[:12],
+            exc,
+        )
         return False
 
 
-async def invalidate_article_cache(url: str) -> bool:
+def _serialize_article(
+    article: Article,
+) -> dict:
+    """Конвертировать Article в dict для JSON."""
+    pub_at = article.published_at
+    return {
+        'url': article.url,
+        'content': article.content,
+        'title': article.title,
+        'author': article.author,
+        'published_at': (
+            pub_at.isoformat() if pub_at else None
+        ),
+        'extracted_at': (
+            article.extracted_at.isoformat()
+        ),
+        'paywall_type': article.paywall_type,
+        'extraction_method': (
+            article.extraction_method
+        ),
+    }
+
+
+async def invalidate_article_cache(
+    url: str,
+) -> bool:
     """Удалить статью из кеша.
 
     Args:
         url: URL статьи.
 
     Returns:
-        True если удалили или ключа не было, False при ошибке.
+        True если удалили или ключа не было,
+        False при ошибке.
     """
     url_hash = get_url_hash(url)
     if not url_hash:
         return False
 
     try:
-        client = redis_client.client
-        await client.delete(f'article:{url_hash}')
+        client = get_redis_client().client
+        await client.delete(
+            _article_key(url_hash),
+        )
         return True
 
     except Exception:
+        logger.exception(
+            'Ошибка удаления кеша: %s',
+            url_hash[:12],
+        )
         return False
 
 
@@ -124,26 +188,29 @@ async def get_cache_stats() -> dict[str, int]:
     """Получить статистику использования кеша.
 
     Returns:
-        Словарь с количеством ключей и занимаемой памятью.
+        Словарь с количеством ключей и памятью.
     """
-    client = redis_client.client
-
     try:
-        # Количество ключей articles
-        keys = await client.keys('article:*')
+        client = get_redis_client().client
+
+        keys = await client.keys(
+            f'{_KEY_PREFIX}:*',
+        )
         count = len(keys)
 
-        # Информация о памяти (если есть доступ)
         info = await client.info('memory')
         memory_bytes = info.get('used_memory', 0)
 
         return {
             'articles_count': count,
             'memory_bytes': memory_bytes,
-            'memory_mb': round(memory_bytes / 1024 / 1024, 2),
+            'memory_mb': round(
+                memory_bytes / 1024 / 1024, 2,
+            ),
         }
 
     except Exception:
+        logger.exception('Ошибка получения статистики')
         return {
             'articles_count': 0,
             'memory_bytes': 0,

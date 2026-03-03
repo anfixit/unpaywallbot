@@ -4,6 +4,7 @@ Spiegel S+, Zeit Z+, FAZ F+, Süddeutsche,
 Tagesspiegel, Welt.
 """
 
+import logging
 import re
 from urllib.parse import (
     parse_qs,
@@ -17,17 +18,19 @@ from bot.models.paywall_info import PaywallInfo
 from bot.services.content_extractor import (
     ContentExtractor,
 )
+from bot.services.methods.archive_relay import (
+    fetch_via_archive,
+)
 from bot.services.methods.headless_auth import (
     fetch_via_headless_auth,
 )
 from bot.services.methods.js_disable import (
     fetch_via_js_disable,
 )
-from bot.utils.logger import setup_logger
 
 __all__ = ['GermanFreemiumPlatform']
 
-logger = setup_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class GermanFreemiumPlatform:
@@ -57,6 +60,7 @@ class GermanFreemiumPlatform:
         self,
         url: str,
         paywall_info: PaywallInfo,
+        *,
         user_id: int | None = None,
     ) -> Article | None:
         """Обработать URL немецкого издания.
@@ -84,7 +88,9 @@ class GermanFreemiumPlatform:
                 return await fetch_via_headless_auth(
                     url,
                     user_id=user_id,
-                    account_manager=self.account_manager,
+                    account_manager=(
+                        self.account_manager
+                    ),
                     extractor=self.extractor,
                 )
             except RuntimeError:
@@ -92,9 +98,6 @@ class GermanFreemiumPlatform:
                     'Headless не удался для %s, '
                     'пробуем archive',
                     url,
-                )
-                from bot.services.methods.archive_relay import (  # noqa: E501
-                    fetch_via_archive,
                 )
                 return await fetch_via_archive(
                     url, extractor=self.extractor,
@@ -121,7 +124,9 @@ class GermanFreemiumPlatform:
             if pat_domain in domain:
                 return bool(
                     re.search(
-                        pattern, url, re.IGNORECASE,
+                        pattern,
+                        url,
+                        re.IGNORECASE,
                     ),
                 )
 
