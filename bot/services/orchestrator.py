@@ -144,16 +144,16 @@ class Orchestrator:
             )
             request.paywall_info = paywall_info
 
-            # 3. Неизвестный тип → archive.ph
+            # 3. Неизвестный тип →
+            #    js_disable, затем archive.ph
             if not paywall_info.is_known:
-                article = await fetch_via_archive(
+                article = await self._handle_unknown(
                     url,
-                    extractor=self.extractor,
                 )
                 return self._complete(
                     request, article,
                     PaywallType.UNKNOWN,
-                    BypassMethod.ARCHIVE_RELAY,
+                    BypassMethod.JS_DISABLE,
                 )
 
             # 4. Есть платформа → делегируем
@@ -191,10 +191,8 @@ class Orchestrator:
                     paywall_info.suggested_method,
                 )
 
-            # 6. Fallback → archive
-            article = await fetch_via_archive(
-                url, extractor=self.extractor,
-            )
+            # 6. Fallback → js_disable + archive
+            article = await self._handle_unknown(url)
             return self._complete(
                 request, article,
                 PaywallType.UNKNOWN,
@@ -210,6 +208,37 @@ class Orchestrator:
             ))
             return request
 
+    async def _handle_unknown(
+        self,
+        url: str,
+    ) -> Article | None:
+        """Обработать неизвестный сайт.
+
+        Стратегия: сначала js_disable (быстро,
+        работает для большинства сайтов), затем
+        archive.ph как fallback.
+
+        Args:
+            url: URL статьи.
+
+        Returns:
+            Article или None.
+        """
+        article = await fetch_via_js_disable(
+            url, extractor=self.extractor,
+        )
+        if article and not article.is_empty:
+            return article
+
+        logger.debug(
+            'js_disable не помог для %s,'
+            ' пробуем archive.ph',
+            url,
+        )
+        return await fetch_via_archive(
+            url, extractor=self.extractor,
+        )
+
     def _complete(
         self,
         request: UserRequest,
@@ -223,8 +252,6 @@ class Orchestrator:
 
         Делегирует установку временных меток и
         статуса в request.complete() (DRY).
-        Дополнительно проставляет метаданные
-        на статью и ставит кеширование в фон.
 
         Args:
             request: Текущий запрос пользователя.
@@ -235,15 +262,11 @@ class Orchestrator:
         Returns:
             Тот же request с заполненными полями.
         """
-        # Проставить метаданные ДО complete(),
-        # чтобы article уже содержал полную
-        # информацию при логировании.
         if article and paywall_type:
             article.paywall_type = paywall_type
         if article and method:
             article.extraction_method = method
 
-        # Делегируем: processed_at, success, article
         request.complete(article=article)
 
         if article:
@@ -255,11 +278,7 @@ class Orchestrator:
     def _schedule_cache(
         article: Article,
     ) -> None:
-        """Поставить кеширование в фон (§17.5).
-
-        Храним ссылку на задачу в _background_tasks,
-        чтобы GC не собрал её до завершения.
-        """
+        """Поставить кеширование в фон (§17.5)."""
         task = asyncio.create_task(
             save_article_to_cache(article),
         )
