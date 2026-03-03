@@ -1,8 +1,8 @@
-"""Метод обхода через archive.ph (универсальный fallback).
+"""Метод обхода через archive.ph.
 
-Отправляет URL в archive.ph, ждёт сохранения и возвращает
-архивную копию. Работает для любых типов paywall, но медленно
-(10-30 сек) и не гарантирует наличие свежих статей.
+Принцип: archive.ph кеширует страницы без paywall.
+Если архив есть — забираем. Если нет — запрашиваем
+создание и ждём.
 """
 
 import asyncio
@@ -11,18 +11,16 @@ import httpx
 
 from bot.constants import DEFAULT_TIMEOUT_SECONDS
 from bot.models.article import Article
-from bot.services.content_extractor import ContentExtractor
+from bot.services.content_extractor import (
+    ContentExtractor,
+)
 from bot.utils.url_utils import normalize_url
 
 __all__ = ['fetch_via_archive']
 
-# API archive.ph (неофициальный, но стабильный)
-ARCHIVE_API_URL = 'https://archive.ph/'
-
-# Максимальное время ожидания архивации
-MAX_WAIT_SECONDS = 30
-# Интервал между проверками
-POLL_INTERVAL = 2
+_ARCHIVE_BASE = 'https://archive.ph'
+_MAX_WAIT_SECONDS = 60
+_POLL_INTERVAL = 5
 
 
 async def fetch_via_archive(
@@ -32,15 +30,13 @@ async def fetch_via_archive(
 ) -> Article | None:
     """Извлечь статью через archive.ph.
 
-    Отправляет URL в архив, ждёт создания копии и парсит её.
-
     Args:
         url: URL статьи.
         extractor: Экстрактор контента.
         client: HTTP-клиент.
 
     Returns:
-        Объект Article или None, если не удалось.
+        Article или None.
     """
     norm_url = normalize_url(url)
     if not norm_url:
@@ -58,61 +54,58 @@ async def fetch_via_archive(
         extractor = ContentExtractor()
 
     try:
-        # 1. Запрашиваем архивацию
-        archive_url = await _submit_to_archive(client, norm_url)
-        if not archive_url:
-            return None
+        archive_url = f'{_ARCHIVE_BASE}/{norm_url}'
 
-        # 2. Ждём, пока архив создастся
-        archived_page = await _wait_for_archive(client, archive_url)
-        if not archived_page:
-            return None
+        response = await client.get(archive_url)
 
-        # 3. Извлекаем контент из архивной копии
-        article = extractor.extract(archived_page, norm_url)
+        if response.status_code == 200:
+            article = extractor.extract(
+                response.text, norm_url,
+            )
+            if article and not article.is_empty:
+                return article
 
-        return article
+        # Архива нет — запрашиваем создание
+        html = await _request_archive(
+            client, norm_url,
+        )
+        if html:
+            return extractor.extract(html, norm_url)
+
+        return None
 
     finally:
         if close_client:
             await client.aclose()
 
 
-async def _submit_to_archive(client: httpx.AsyncClient, url: str) -> str | None:
-    """Отправить URL в archive.ph и получить ссылку на архив."""
+async def _request_archive(
+    client: httpx.AsyncClient,
+    url: str,
+) -> str | None:
+    """Запросить создание архива и дождаться.
+
+    Returns:
+        HTML архивной страницы или None.
+    """
     try:
-        # Простая форма: POST с url=...
-        response = await client.post(
-            ARCHIVE_API_URL,
+        await client.post(
+            f'{_ARCHIVE_BASE}/submit/',
             data={'url': url},
-            headers={
-                'User-Agent': 'Mozilla/5.0 (compatible; ArchiveBot)',
-            }
         )
-        response.raise_for_status()
-
-        # archive.ph возвращает 200 и ссылку в Location или в теле
-        # Пробуем найти ссылку на архив
-        if 'location' in response.headers:
-            return response.headers['location']
-
-        # Если нет Location, ищем в теле страницы
-        # (упрощённо — возвращаем None, в реальном проекте нужен парсинг)
-        return None
-
     except httpx.HTTPError:
         return None
 
+    archive_url = f'{_ARCHIVE_BASE}/{url}'
+    polls = _MAX_WAIT_SECONDS // _POLL_INTERVAL
 
-async def _wait_for_archive(client: httpx.AsyncClient, archive_url: str) -> str | None:
-    """Дождаться создания архивной копии и вернуть HTML."""
-    for attempt in range(MAX_WAIT_SECONDS // POLL_INTERVAL):
-        await asyncio.sleep(POLL_INTERVAL)
+    for _ in range(polls):
+        await asyncio.sleep(_POLL_INTERVAL)
 
         try:
             response = await client.get(archive_url)
             if response.status_code == 200:
-                # Проверяем, что это не страница ожидания
+                # «Waiting» — страница ожидания archive.ph
                 if 'Waiting' not in response.text:
                     return response.text
         except httpx.HTTPError:

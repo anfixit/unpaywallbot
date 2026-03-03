@@ -5,7 +5,7 @@
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 
 from bot.constants import BypassMethod, PaywallType
 

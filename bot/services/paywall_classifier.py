@@ -1,8 +1,7 @@
 """Классификатор paywall по домену и URL.
 
-Загружает конфигурацию из data/paywall_map.yaml и определяет
-тип paywall для переданного URL. Используется оркестратором
-для выбора стратегии обхода.
+Загружает конфигурацию из data/paywall_map.yaml
+и определяет тип paywall для переданного URL.
 """
 
 from pathlib import Path
@@ -16,96 +15,99 @@ from bot.utils.url_utils import extract_domain
 
 __all__ = ['PaywallClassifier']
 
-# Путь к файлу конфигурации относительно корня проекта
-CONFIG_PATH: Final[Path] = Path(__file__).parent.parent.parent / 'data' / 'paywall_map.yaml'
+CONFIG_PATH: Final[Path] = (
+    Path(__file__).parent.parent.parent
+    / 'data'
+    / 'paywall_map.yaml'
+)
 
 
 class PaywallClassifier:
-    """Классификатор paywall на основе YAML-конфигурации.
+    """Классификатор paywall на основе YAML-конфига.
 
-    Загружает маппинг доменов в тип paywall и рекомендуемый метод обхода.
-    Результат возвращает в виде модели PaywallInfo.
+    Загружает маппинг доменов → тип paywall
+    и рекомендуемый метод обхода.
     """
 
-    def __init__(self, config_path: Path = CONFIG_PATH) -> None:
-        """Инициализировать классификатор с загрузкой конфига.
+    def __init__(
+        self,
+        config_path: Path = CONFIG_PATH,
+    ) -> None:
+        """Инициализировать с загрузкой конфига.
 
         Args:
-            config_path: Путь к YAML-файлу с конфигурацией.
+            config_path: Путь к YAML-файлу.
 
         Raises:
-            FileNotFoundError: Если файл конфигурации не существует.
-            yaml.YAMLError: Если файл содержит некорректный YAML.
+            FileNotFoundError: Файл не существует.
+            yaml.YAMLError: Некорректный YAML.
         """
         self.config_path = config_path
         self._domain_map: dict[str, dict] = {}
         self._load_config()
 
     def _load_config(self) -> None:
-        """Загрузить и распарсить YAML-конфигурацию."""
+        """Загрузить и распарсить YAML."""
         if not self.config_path.exists():
             raise FileNotFoundError(
-                f'Конфиг paywall не найден: {self.config_path}'
+                'Конфиг paywall не найден: '
+                f'{self.config_path}',
             )
 
-        with open(self.config_path, encoding='utf-8') as f:
+        with open(
+            self.config_path, encoding='utf-8',
+        ) as f:
             raw_config = yaml.safe_load(f)
 
         if not isinstance(raw_config, dict):
             raise ValueError(
-                f'Неверный формат конфига: ожидался dict, получен {type(raw_config)}'
+                'Неверный формат конфига: '
+                f'ожидался dict, получен '
+                f'{type(raw_config).__name__}',
             )
 
         self._domain_map = raw_config
 
-    def _match_domain(self, domain: str) -> tuple[str, dict] | None:
-        """Найти запись в конфиге по домену (с поддержкой поддоменов).
+    def _match_domain(
+        self,
+        domain: str,
+    ) -> tuple[str, dict] | None:
+        """Найти запись по домену (с поддоменами).
 
         Args:
-            domain: Домен для поиска (например, 'spiegel.de').
+            domain: Домен (например, 'spiegel.de').
 
         Returns:
-            Кортеж (найденный_ключ, конфиг) или None, если не найден.
+            (ключ, конфиг) или None.
         """
-        # Прямое совпадение
         if domain in self._domain_map:
             return domain, self._domain_map[domain]
 
-        # Проверяем поддомены (например, для www.spiegel.de -> spiegel.de)
         parts = domain.split('.')
         for i in range(1, len(parts) - 1):
-            test_domain = '.'.join(parts[i:])
-            if test_domain in self._domain_map:
-                return test_domain, self._domain_map[test_domain]
+            test = '.'.join(parts[i:])
+            if test in self._domain_map:
+                return test, self._domain_map[test]
 
         return None
 
-    def _parse_paywall_type(self, type_str: str) -> PaywallType:
-        """Преобразовать строку из конфига в PaywallType.
-
-        Args:
-            type_str: Строка из поля 'type' в YAML.
-
-        Returns:
-            Соответствующий элемент PaywallType или UNKNOWN.
-        """
+    @staticmethod
+    def _parse_paywall_type(
+        type_str: str,
+    ) -> PaywallType:
+        """Строка из конфига → PaywallType."""
         try:
             return PaywallType(type_str)
         except ValueError:
             return PaywallType.UNKNOWN
 
-    def _parse_bypass_method(self, method_str: str | None) -> BypassMethod | None:
-        """Преобразовать строку из конфига в BypassMethod.
-
-        Args:
-            method_str: Строка из поля 'method' в YAML или None.
-
-        Returns:
-            Соответствующий элемент BypassMethod или None.
-        """
+    @staticmethod
+    def _parse_bypass_method(
+        method_str: str | None,
+    ) -> BypassMethod | None:
+        """Строка из конфига → BypassMethod."""
         if not method_str:
             return None
-
         try:
             return BypassMethod(method_str)
         except ValueError:
@@ -118,34 +120,34 @@ class PaywallClassifier:
             url: Полный URL статьи.
 
         Returns:
-            PaywallInfo с результатами классификации.
+            PaywallInfo с результатами.
         """
         domain = extract_domain(url)
-
-        # Ищем в конфиге
         match = self._match_domain(domain)
 
         if not match:
-            # Неизвестный домен
             return PaywallInfo.unknown(url)
 
         domain_key, config = match
 
-        # Парсим тип и метод
-        paywall_type = self._parse_paywall_type(config.get('type', 'unknown'))
-        method_str = config.get('method')
-        suggested_method = self._parse_bypass_method(method_str)
+        paywall_type = self._parse_paywall_type(
+            config.get('type', 'unknown'),
+        )
+        suggested_method = self._parse_bypass_method(
+            config.get('method'),
+        )
 
-        # Определяем requires_auth / requires_headless
-        requires_auth = config.get('requires_auth', False)
-        requires_headless = config.get('requires_headless', False)
+        requires_auth = config.get(
+            'requires_auth', False,
+        )
+        requires_headless = config.get(
+            'requires_headless', False,
+        )
 
-        # Для hard paywall по умолчанию нужен headless
         if paywall_type == PaywallType.HARD:
             requires_headless = True
             requires_auth = True
 
-        # Для freemium может требоваться проверка платформы
         platform = config.get('platform')
 
         return PaywallInfo(
@@ -156,9 +158,9 @@ class PaywallClassifier:
             platform=platform,
             requires_auth=requires_auth,
             requires_headless=requires_headless,
-            confidence=1.0,  # для конфига всегда полная уверенность
+            confidence=1.0,
         )
 
     def reload(self) -> None:
-        """Перезагрузить конфигурацию (без перезапуска бота)."""
+        """Перезагрузить конфигурацию."""
         self._load_config()

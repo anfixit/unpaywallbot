@@ -1,25 +1,44 @@
-"""Метод обхода hard paywall через headless-браузер с авторизацией.
+"""Метод обхода hard paywall через headless-браузер.
 
-Принцип работы: для hard paywall (Times, FT, Republic) контента нет в DOM
-без валидной сессии. Используем Playwright для запуска браузера,
-логинимся и забираем контент.
+Принцип: для hard paywall контента нет в DOM без
+валидной сессии. Используем Playwright для запуска
+браузера, логина и извлечения контента.
 """
 
 import asyncio
 
-from playwright.async_api import Page, async_playwright
+from playwright.async_api import (
+    Page,
+    async_playwright,
+)
+from playwright.async_api import (
+    TimeoutError as PlaywrightTimeout,
+)
 
 from bot.auth.account_manager import AccountManager
 from bot.models.article import Article
-from bot.services.content_extractor import ContentExtractor
+from bot.services.content_extractor import (
+    ContentExtractor,
+)
 from bot.utils.url_utils import normalize_url
 
 __all__ = ['fetch_via_headless_auth']
 
-# Константы для браузера
-BROWSER_TIMEOUT = 30000  # 30 секунд
-NAVIGATION_TIMEOUT = 30000
-WAIT_FOR_CONTENT_TIMEOUT = 10000
+_BROWSER_TIMEOUT = 30_000
+_NAVIGATION_TIMEOUT = 30_000
+_CONTENT_WAIT_TIMEOUT = 10_000
+_LOGIN_FORM_TIMEOUT = 5_000
+_LOGIN_REDIRECT_TIMEOUT = 10_000
+_FALLBACK_WAIT = 2
+
+_DEFAULT_USER_AGENT = (
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+    'AppleWebKit/537.36'
+)
+
+_CONTENT_SELECTORS = (
+    'article, .article, .content, main'
+)
 
 
 async def fetch_via_headless_auth(
@@ -28,31 +47,31 @@ async def fetch_via_headless_auth(
     account_manager: AccountManager,
     extractor: ContentExtractor | None = None,
 ) -> Article | None:
-    """Извлечь статью через headless-браузер с авторизацией.
-
-    Запускает браузер, логинится (если нужно) и забирает контент.
-    Требует установленного playwright и браузеров.
+    """Извлечь статью через headless-браузер.
 
     Args:
         url: URL статьи.
-        user_id: ID пользователя Telegram (для получения аккаунта).
+        user_id: ID пользователя Telegram.
         account_manager: Менеджер аккаунтов.
         extractor: Экстрактор контента.
 
     Returns:
-        Объект Article или None, если не удалось.
+        Article или None.
 
     Raises:
-        RuntimeError: Если не удалось получить аккаунт или запустить браузер.
+        RuntimeError: Нет аккаунта или браузера.
     """
     norm_url = normalize_url(url)
     if not norm_url:
         return None
 
-    # Получаем аккаунт для этого домена
-    account = await account_manager.get_account_for_url(norm_url, user_id)
+    account = await account_manager.get_account_for_url(
+        norm_url, user_id,
+    )
     if not account:
-        raise RuntimeError(f'Нет доступного аккаунта для {norm_url}')
+        raise RuntimeError(
+            f'Нет аккаунта для {norm_url}',
+        )
 
     if extractor is None:
         extractor = ContentExtractor()
@@ -62,65 +81,70 @@ async def fetch_via_headless_auth(
     page = None
 
     try:
-        # Запускаем браузер
-        playwright = await async_playwright().start()
-        browser = await playwright.chromium.launch(
+        pw = await async_playwright().start()
+        browser = await pw.chromium.launch(
             headless=True,
-            args=['--disable-blink-features=AutomationControlled'],
+            args=[
+                '--disable-blink-features'
+                '=AutomationControlled',
+            ],
         )
 
-        # Создаём контекст с сохранёнными куками
         context = await browser.new_context(
-            viewport={'width': 1280, 'height': 800},
-            user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+            viewport={
+                'width': 1280,
+                'height': 800,
+            },
+            user_agent=_DEFAULT_USER_AGENT,
         )
 
-        # Восстанавливаем сессию
         if account.session_cookies:
-            await context.add_cookies(account.session_cookies)
+            await context.add_cookies(
+                account.session_cookies,
+            )
 
         page = await context.new_page()
-        page.set_default_timeout(BROWSER_TIMEOUT)
+        page.set_default_timeout(_BROWSER_TIMEOUT)
 
-        # Переходим на страницу
         response = await page.goto(
             norm_url,
             wait_until='networkidle',
-            timeout=NAVIGATION_TIMEOUT,
+            timeout=_NAVIGATION_TIMEOUT,
         )
 
         if not response or response.status >= 400:
-            raise RuntimeError(f'HTTP {response.status if response else "unknown"}')
+            status = (
+                response.status if response
+                else 'unknown'
+            )
+            raise RuntimeError(f'HTTP {status}')
 
         # Проверяем, не выкинуло ли на логин
-        if 'login' in page.url.lower() or 'signin' in page.url.lower():
-            # Пробуем залогиниться
+        if _is_login_page(page.url):
             await _handle_login(page, account)
+            await page.goto(
+                norm_url,
+                wait_until='networkidle',
+            )
 
-            # Снова идём на статью
-            await page.goto(norm_url, wait_until='networkidle')
-
-        # Ждём появления контента
         try:
-            await page.wait_for_selector('article, .article, .content, main', timeout=WAIT_FOR_CONTENT_TIMEOUT)
-        except:
-            # Если нет явного селектора, просто подождём
-            await asyncio.sleep(2)
+            await page.wait_for_selector(
+                _CONTENT_SELECTORS,
+                timeout=_CONTENT_WAIT_TIMEOUT,
+            )
+        except PlaywrightTimeout:
+            await asyncio.sleep(_FALLBACK_WAIT)
 
-        # Получаем HTML
         html = await page.content()
 
-        # Сохраняем обновлённые куки
-        account.session_cookies = await context.cookies()
+        account.session_cookies = (
+            await context.cookies()
+        )
         await account_manager.save_account(account)
 
-        # Извлекаем контент
-        article = extractor.extract(html, norm_url)
-
-        return article
+        return extractor.extract(html, norm_url)
 
     finally:
-        # Закрываем всё аккуратно
         if page:
             await page.close()
         if context:
@@ -129,38 +153,64 @@ async def fetch_via_headless_auth(
             await browser.close()
 
 
-async def _handle_login(page: Page, account: 'Account') -> None:
-    """Обработать логин, если потребовался.
+def _is_login_page(url: str) -> bool:
+    """Проверить, является ли URL страницей логина."""
+    lower = url.lower()
+    return 'login' in lower or 'signin' in lower
+
+
+async def _handle_login(
+    page: Page,
+    account: object,
+) -> None:
+    """Обработать логин.
 
     Args:
         page: Страница браузера.
-        account: Аккаунт с логином/паролем.
+        account: Аккаунт с email/password.
     """
-    # Ждём форму логина
-    await page.wait_for_selector('form, input[type="email"], input[type="password"]', timeout=5000)
+    await page.wait_for_selector(
+        'form, input[type="email"], '
+        'input[type="password"]',
+        timeout=_LOGIN_FORM_TIMEOUT,
+    )
 
-    # Пробуем разные селекторы для полей
-    email_selectors = ['input[type="email"]', 'input[name="email"]', 'input[name="login"]']
-    pass_selectors = ['input[type="password"]', 'input[name="password"]']
+    email_selectors = [
+        'input[type="email"]',
+        'input[name="email"]',
+        'input[name="login"]',
+    ]
+    pass_selectors = [
+        'input[type="password"]',
+        'input[name="password"]',
+    ]
 
-    # Заполняем email
     for selector in email_selectors:
         if await page.locator(selector).count():
-            await page.fill(selector, account.email)
+            await page.fill(
+                selector, account.email,
+            )
             break
 
-    # Заполняем пароль
     for selector in pass_selectors:
         if await page.locator(selector).count():
-            await page.fill(selector, account.password)
+            await page.fill(
+                selector, account.password,
+            )
             break
 
-    # Жмём кнопку submit
-    submit_selectors = ['button[type="submit"]', 'input[type="submit"]', 'button:has-text("Login")']
+    submit_selectors = [
+        'button[type="submit"]',
+        'input[type="submit"]',
+        'button:has-text("Login")',
+    ]
     for selector in submit_selectors:
         if await page.locator(selector).count():
             await page.click(selector)
             break
 
-    # Ждём редиректа
-    await page.wait_for_url('**/*', wait_until='networkidle', timeout=10000)
+    await page.wait_for_url(
+        '**/*',
+        wait_until='networkidle',
+        timeout=_LOGIN_REDIRECT_TIMEOUT,
+    )

@@ -4,6 +4,7 @@
 выделения заголовка, автора и текста.
 """
 
+import re
 
 import lxml.html
 import readability
@@ -14,19 +15,39 @@ from bot.utils.url_utils import normalize_url
 
 __all__ = ['ContentExtractor']
 
+_AUTHOR_PATTERNS: list[str] = [
+    r'<meta[^>]+name="author"'
+    r'[^>]+content="([^"]+)"',
+    r'<meta[^>]+property="article:author"'
+    r'[^>]+content="([^"]+)"',
+    r'class="[^"]*author[^"]*"[^>]*>([^<]+)',
+    r'class="[^"]*byline[^"]*"[^>]*>([^<]+)',
+]
+
+_TAG_RE = re.compile(r'<[^>]+>')
+_WHITESPACE_RE = re.compile(r'\s+')
+
 
 class ContentExtractor:
     """Извлекает читаемый контент из HTML."""
 
-    def __init__(self, min_text_length: int = 200) -> None:
+    def __init__(
+        self,
+        min_text_length: int = 200,
+    ) -> None:
         """Инициализировать экстрактор.
 
         Args:
-            min_text_length: Минимальная длина текста для успешного извлечения.
+            min_text_length: Минимальная длина текста
+                для успешного извлечения.
         """
         self.min_text_length = min_text_length
 
-    def extract(self, html: str, url: str) -> Article | None:
+    def extract(
+        self,
+        html: str,
+        url: str,
+    ) -> Article | None:
         """Извлечь статью из HTML.
 
         Args:
@@ -34,7 +55,7 @@ class ContentExtractor:
             url: Исходный URL (для нормализации).
 
         Returns:
-            Объект Article или None, если извлечь не удалось.
+            Article или None.
         """
         if not html or not html.strip():
             return None
@@ -44,13 +65,11 @@ class ContentExtractor:
             content_html = doc.summary()
             title = doc.title()
 
-            # Извлекаем чистый текст из HTML
             text = self._html_to_text(content_html)
 
             if len(text) < self.min_text_length:
                 return None
 
-            # Пытаемся найти автора
             author = self._extract_author(html)
 
             return Article(
@@ -61,7 +80,6 @@ class ContentExtractor:
             )
 
         except (ParserError, ValueError, TypeError):
-            # Логирование будет в вызывающем коде
             return None
 
     def _html_to_text(self, html: str) -> str:
@@ -77,27 +95,33 @@ class ContentExtractor:
             root = lxml.html.fromstring(html)
             text = root.text_content()
         except (ParserError, ValueError):
-            # Если lxml не справился, убираем теги вручную
             text = self._strip_tags(html)
 
-        # Нормализуем пробелы
-        lines = (line.strip() for line in text.splitlines())
-        chunks = (chunk.strip() for line in lines for chunk in line.split('  '))
-        text = ' '.join(chunk for chunk in chunks if chunk)
+        lines = (
+            line.strip()
+            for line in text.splitlines()
+        )
+        chunks = (
+            chunk.strip()
+            for line in lines
+            for chunk in line.split('  ')
+        )
+        text = ' '.join(
+            chunk for chunk in chunks if chunk
+        )
 
         return text.strip()
 
-    def _strip_tags(self, html: str) -> str:
-        """Удалить HTML-теги из строки (запасной метод)."""
-        import re
-        # Убираем теги
-        text = re.sub(r'<[^>]+>', ' ', html)
-        # Убираем лишние пробелы
-        text = re.sub(r'\s+', ' ', text)
+    @staticmethod
+    def _strip_tags(html: str) -> str:
+        """Удалить HTML-теги (запасной метод)."""
+        text = _TAG_RE.sub(' ', html)
+        text = _WHITESPACE_RE.sub(' ', text)
         return text.strip()
 
-    def _extract_author(self, html: str) -> str | None:
-        """Попытаться извлечь автора из HTML.
+    @staticmethod
+    def _extract_author(html: str) -> str | None:
+        """Извлечь автора из HTML.
 
         Args:
             html: HTML-код страницы.
@@ -105,17 +129,10 @@ class ContentExtractor:
         Returns:
             Имя автора или None.
         """
-        # Простейшие эвристики — можно расширять
-        patterns = [
-            r'<meta[^>]+name="author"[^>]+content="([^"]+)"',
-            r'<meta[^>]+property="article:author"[^>]+content="([^"]+)"',
-            r'class="[^"]*author[^"]*"[^>]*>([^<]+)',
-            r'class="[^"]*byline[^"]*"[^>]*>([^<]+)',
-        ]
-
-        import re
-        for pattern in patterns:
-            match = re.search(pattern, html, re.IGNORECASE)
+        for pattern in _AUTHOR_PATTERNS:
+            match = re.search(
+                pattern, html, re.IGNORECASE,
+            )
             if match:
                 return match.group(1).strip()
 

@@ -1,29 +1,39 @@
 """Платформа для немецких freemium-изданий.
 
-Особенности:
-- Spiegel S+, Zeit Z+, FAZ F+, Süddeutsche, Tagesspiegel
-- Статья может быть частично открыта, но требует проверки маркеров
-- Некоторые используют параметр ?reduced=true для полного текста
+Spiegel S+, Zeit Z+, FAZ F+, Süddeutsche,
+Tagesspiegel, Welt.
 """
 
 import re
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import (
+    parse_qs,
+    urlencode,
+    urlparse,
+)
 
 from bot.auth.account_manager import AccountManager
 from bot.models.article import Article
 from bot.models.paywall_info import PaywallInfo
-from bot.services.content_extractor import ContentExtractor
-from bot.services.methods.headless_auth import fetch_via_headless_auth
-from bot.services.methods.js_disable import fetch_via_js_disable
+from bot.services.content_extractor import (
+    ContentExtractor,
+)
+from bot.services.methods.headless_auth import (
+    fetch_via_headless_auth,
+)
+from bot.services.methods.js_disable import (
+    fetch_via_js_disable,
+)
+from bot.utils.logger import setup_logger
 
 __all__ = ['GermanFreemiumPlatform']
+
+logger = setup_logger(__name__)
 
 
 class GermanFreemiumPlatform:
     """Обработчик немецких freemium-изданий."""
 
-    # Маркеры премиум-контента в URL
-    PREMIUM_URL_PATTERNS = {
+    PREMIUM_URL_PATTERNS: dict[str, str] = {
         'spiegel.de': r'/plus/|spiegel-plus|s\+',
         'zeit.de': r'/plus/|zeit-plus|z\+',
         'faz.net': r'/faz-plus|f\+',
@@ -32,21 +42,15 @@ class GermanFreemiumPlatform:
         'welt.de': r'/plus/',
     }
 
-    # Маркеры в HTML (если URL не помог)
-    PREMIUM_HTML_PATTERNS = [
-        r'class="[^"]*paywall[^"]*"',
-        r'class="[^"]*premium[^"]*"',
-        r'data-.*=."paywall"',
-        r'id="[^"]*paywall[^"]*"',
-    ]
-
     def __init__(
         self,
         extractor: ContentExtractor | None = None,
         account_manager: AccountManager | None = None,
     ) -> None:
         """Инициализировать платформу."""
-        self.extractor = extractor or ContentExtractor()
+        self.extractor = (
+            extractor or ContentExtractor()
+        )
         self.account_manager = account_manager
 
     async def handle(
@@ -60,21 +64,22 @@ class GermanFreemiumPlatform:
         Args:
             url: URL статьи.
             paywall_info: Информация о paywall.
-            user_id: ID пользователя (для авторизации).
+            user_id: ID пользователя.
 
         Returns:
             Article или None.
         """
-        # Проверяем, является ли статья премиум-контентом
-        is_premium = self._check_if_premium(url, paywall_info.domain)
+        is_premium = self._check_if_premium(
+            url, paywall_info.domain,
+        )
 
         if not is_premium:
-            # Открытая статья — просто забираем через js_disable
-            return await fetch_via_js_disable(url, extractor=self.extractor)
+            return await fetch_via_js_disable(
+                url, extractor=self.extractor,
+            )
 
-        # Премиум-статья — пробуем получить через авторизацию
+        # Премиум — пробуем headless
         if user_id and self.account_manager:
-            # Пробуем через headless с авторизацией
             try:
                 return await fetch_via_headless_auth(
                     url,
@@ -82,38 +87,53 @@ class GermanFreemiumPlatform:
                     account_manager=self.account_manager,
                     extractor=self.extractor,
                 )
-            except Exception:
-                # Если не вышло, пробуем archive.ph как fallback
-                from bot.services.methods.archive_relay import (
+            except RuntimeError:
+                logger.warning(
+                    'Headless не удался для %s, '
+                    'пробуем archive',
+                    url,
+                )
+                from bot.services.methods.archive_relay import (  # noqa: E501
                     fetch_via_archive,
                 )
-                return await fetch_via_archive(url, extractor=self.extractor)
+                return await fetch_via_archive(
+                    url, extractor=self.extractor,
+                )
 
-        # Нет аккаунта — может, сработает ?reduced=true
+        # ?reduced=true для Süddeutsche
         if 'sueddeutsche.de' in paywall_info.domain:
-            modified_url = self._add_reduced_param(url)
-            return await fetch_via_js_disable(modified_url, extractor=self.extractor)
+            modified = self._add_reduced_param(url)
+            return await fetch_via_js_disable(
+                modified, extractor=self.extractor,
+            )
 
         return None
 
-    def _check_if_premium(self, url: str, domain: str) -> bool:
-        """Проверить, является ли статья премиум-контентом."""
-        # 1. Проверяем по URL
-        for pattern_domain, pattern in self.PREMIUM_URL_PATTERNS.items():
-            if pattern_domain in domain:
-                if re.search(pattern, url, re.IGNORECASE):
-                    return True
-                break
+    def _check_if_premium(
+        self,
+        url: str,
+        domain: str,
+    ) -> bool:
+        """Проверить, премиум ли статья."""
+        for pat_domain, pattern in (
+            self.PREMIUM_URL_PATTERNS.items()
+        ):
+            if pat_domain in domain:
+                return bool(
+                    re.search(
+                        pattern, url, re.IGNORECASE,
+                    ),
+                )
 
-        # 2. По умолчанию считаем, что статья открытая
-        # (полноценная проверка по HTML требует отдельного запроса)
         return False
 
-    def _add_reduced_param(self, url: str) -> str:
-        """Добавить параметр ?reduced=true для Süddeutsche."""
+    @staticmethod
+    def _add_reduced_param(url: str) -> str:
+        """Добавить ?reduced=true для Süddeutsche."""
         parsed = urlparse(url)
         query = parse_qs(parsed.query)
         query['reduced'] = ['true']
-
         new_query = urlencode(query, doseq=True)
-        return parsed._replace(query=new_query).geturl()
+        return parsed._replace(
+            query=new_query,
+        ).geturl()
