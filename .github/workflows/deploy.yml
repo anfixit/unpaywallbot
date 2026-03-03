@@ -7,11 +7,56 @@ on:
   pull_request:
     branches: [main]
 
+# Разрешения для push образа в GHCR
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   # ──────────────────────────────────────────────
-  # 1. Тесты
+  # 1. Матричные проверки качества (параллельно)
   # ──────────────────────────────────────────────
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Ruff check
+        run: uv run ruff check bot/
+
+      - name: Ruff format check
+        run: uv run ruff format --check bot/
+
+  typecheck:
+    name: Types (mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: mypy strict
+        run: uv run mypy bot/ --ignore-missing-imports
+
   test:
+    name: Tests (pytest)
     runs-on: ubuntu-latest
 
     services:
@@ -39,8 +84,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v4
 
       - name: Install dependencies
         run: uv sync --all-extras
@@ -48,26 +92,69 @@ jobs:
       - name: Install Playwright
         run: uv run playwright install --with-deps chromium
 
-      - name: Lint (ruff)
-        run: uv run ruff check bot/
-
-      - name: Type check (mypy)
-        run: uv run mypy bot/ --ignore-missing-imports
-        continue-on-error: true
-
       - name: Run tests
         run: uv run pytest --tb=short -q
 
+  security:
+    name: Security (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Install pip-audit
+        run: uv pip install pip-audit --system
+
+      - name: Audit dependencies for CVE
+        run: uv run pip-audit
+
   # ──────────────────────────────────────────────
-  # 2. Деплой
+  # 2. Сборка и push Docker-образа в GHCR
   # ──────────────────────────────────────────────
-  deploy:
-    needs: test
+  docker:
+    name: Push Docker image
+    needs: [lint, typecheck, test, security]
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'push'
       && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+  # ──────────────────────────────────────────────
+  # 3. Деплой на сервер
+  # ──────────────────────────────────────────────
+  deploy:
+    name: Deploy
+    needs: docker
+    runs-on: ubuntu-latest
     environment: production
+
     steps:
       - name: Deploy to server
         uses: appleboy/ssh-action@v1
@@ -108,7 +195,6 @@ jobs:
             sleep 5
 
             echo "✅ Проверяем статус"
-            # Проверяем более тщательно
             STATUS=$(sudo systemctl is-active unpaywallbot)
             echo "Статус: $STATUS"
 
@@ -119,3 +205,33 @@ jobs:
             fi
 
             echo "🎉 Деплой завершен успешно!"
+
+  # ──────────────────────────────────────────────
+  # 4. Уведомление в Telegram
+  # ──────────────────────────────────────────────
+  notify:
+    name: Telegram notify
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Send Telegram message
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.BOT_TOKEN }}
+          format: markdown
+          message: |
+            *🤖 UnpaywallBot CI/CD*
+
+            📦 Коммит: `${{ github.sha }}`
+            👤 Автор: ${{ github.actor }}
+            📝 ${{ github.event.head_commit.message }}
+
+            🔍 Lint: ${{ needs.deploy.result == 'success' && '✅' || '❌' }}
+            🧪 Tests: ${{ needs.deploy.result == 'success' && '✅' || '❌' }}
+            🐳 Docker: ${{ needs.deploy.result == 'success' && '✅' || '❌' }}
+            🚀 Deploy: ${{ needs.deploy.result == 'success' && '✅' || '❌' }}
+
+            [Workflow](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
