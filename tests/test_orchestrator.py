@@ -101,18 +101,24 @@ async def test_process_url_unknown_paywall(
     p_get, p_save = _patch_cache()
 
     with (
-        p_get,
-        p_save,
-        patch(
-            'bot.services.orchestrator'
-            '.fetch_via_archive',
-            new_callable=AsyncMock,
-            return_value=Article(
-                url='https://test.com',
-                content='Archived content',
+            p_get,
+            p_save,
+            patch(
+                'bot.services.orchestrator'
+                '.fetch_via_js_disable',
+                new_callable=AsyncMock,
+                return_value=None,
             ),
-        ) as mock_archive,
-    ):
+            patch(
+                'bot.services.orchestrator'
+                '.fetch_via_archive',
+                new_callable=AsyncMock,
+                return_value=Article(
+                    url='https://test.com',
+                    content='Archived content',
+                ),
+            ) as mock_archive,
+        ):
         result = await orchestrator.process_url(
             'https://test.com',
         )
@@ -215,18 +221,24 @@ async def test_process_url_fallback(
     p_get, p_save = _patch_cache()
 
     with (
-        p_get,
-        p_save,
-        patch(
-            'bot.services.orchestrator'
-            '.fetch_via_archive',
-            new_callable=AsyncMock,
-            return_value=Article(
-                url='https://failing-site.com',
-                content='Fallback content',
+            p_get,
+            p_save,
+            patch(
+                'bot.services.orchestrator'
+                '.fetch_via_js_disable',
+                new_callable=AsyncMock,
+                return_value=None,
             ),
-        ) as mock_archive,
-    ):
+            patch(
+                'bot.services.orchestrator'
+                '.fetch_via_archive',
+                new_callable=AsyncMock,
+                return_value=Article(
+                    url='https://failing-site.com',
+                    content='Fallback content',
+                ),
+            ) as mock_archive,
+        ):
         result = await orchestrator.process_url(
             'https://failing-site.com',
         )
