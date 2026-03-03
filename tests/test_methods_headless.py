@@ -30,12 +30,12 @@ async def test_headless_auth_success(
     mock_account_manager,
 ) -> None:
     """Успешное извлечение через headless."""
-    # Мок страницы
-    mock_page = AsyncMock()
-    mock_response = Mock()
-    mock_response.status = 200
+    # Мок страницы — обычный Mock, чтобы
+    # set_default_timeout не возвращал корутину
+    mock_page = Mock()
+    mock_page.set_default_timeout = Mock()
     mock_page.goto = AsyncMock(
-        return_value=mock_response,
+        return_value=Mock(status=200),
     )
     mock_page.content = AsyncMock(
         return_value=(
@@ -49,6 +49,10 @@ async def test_headless_auth_success(
     mock_context.new_page = AsyncMock(
         return_value=mock_page,
     )
+    mock_context.add_cookies = AsyncMock()
+    mock_context.cookies = AsyncMock(
+        return_value=[],
+    )
     mock_context.close = AsyncMock()
 
     # Мок браузера
@@ -58,19 +62,17 @@ async def test_headless_auth_success(
     )
     mock_browser.close = AsyncMock()
 
-    # Мок playwright — async context manager
-    mock_pw = AsyncMock()
+    # Мок playwright: async_playwright().start()
+    mock_pw = Mock()
     mock_pw.chromium = Mock()
     mock_pw.chromium.launch = AsyncMock(
         return_value=mock_browser,
     )
+    mock_pw.stop = AsyncMock()
 
-    mock_pw_cm = AsyncMock()
-    mock_pw_cm.__aenter__ = AsyncMock(
+    mock_pw_factory = Mock()
+    mock_pw_factory.start = AsyncMock(
         return_value=mock_pw,
-    )
-    mock_pw_cm.__aexit__ = AsyncMock(
-        return_value=False,
     )
 
     # Мок экстрактора
@@ -85,7 +87,7 @@ async def test_headless_auth_success(
     with patch(
         'bot.services.methods.headless_auth'
         '.async_playwright',
-        return_value=mock_pw_cm,
+        return_value=mock_pw_factory,
     ):
         result = await fetch_via_headless_auth(
             'https://test.com',

@@ -19,6 +19,14 @@ def platform():
 
 
 @pytest.fixture
+def platform_with_auth():
+    """Платформа с менеджером аккаунтов."""
+    return GermanFreemiumPlatform(
+        account_manager=AsyncMock(),
+    )
+
+
+@pytest.fixture
 def paywall_info():
     """Базовая информация о paywall."""
     return PaywallInfo(
@@ -54,7 +62,7 @@ async def test_german_platform_open_article(
 
 @pytest.mark.asyncio
 async def test_german_platform_premium_article(
-    platform,
+    platform_with_auth,
     paywall_info,
 ) -> None:
     """Премиум-статья пробует headless."""
@@ -67,7 +75,7 @@ async def test_german_platform_premium_article(
             content='Premium content',
         ),
     ) as mock_headless:
-        result = await platform.handle(
+        result = await platform_with_auth.handle(
             'https://www.spiegel.de/plus/artikel',
             paywall_info,
             user_id=123,

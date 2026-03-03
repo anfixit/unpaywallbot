@@ -6,7 +6,7 @@
 """
 
 import logging
-import random
+import secrets
 
 import httpx
 
@@ -47,7 +47,7 @@ _GOOGLEBOT_USER_AGENTS = [
 def _get_random_googlebot_headers() -> dict[str, str]:
     """Сгенерировать заголовки Googlebot."""
     return {
-        'User-Agent': random.choice(
+        'User-Agent': secrets.choice(
             _GOOGLEBOT_USER_AGENTS,
         ),
         'Accept': (
