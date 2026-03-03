@@ -1,71 +1,122 @@
 #!/usr/bin/env python
 """Скрипт для регистрации аккаунтов в менеджере.
 
-Использование:
-    python scripts/register_accounts.py --domain nytimes.com --email user@example.com --password pass123
-    python scripts/register_accounts.py --domain spiegel.de --email user@example.com --password pass123 --shared
+Запуск::
+
+    uv run python -m scripts.register_accounts \\
+        --domain nytimes.com \\
+        --email user@example.com \\
+        --password pass123 --shared
 """
 
 import argparse
 import asyncio
-
-# Добавляем корневую директорию в путь для импорта
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from bot.auth.account_manager import Account, AccountManager
+from bot.auth.account_manager import (
+    Account,
+    AccountManager,
+)
 from bot.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+_DEFAULT_STORAGE = Path('data/sessions/accounts.json')
 
-async def main():
-    parser = argparse.ArgumentParser(description='Регистрация аккаунтов')
-    parser.add_argument('--domain', required=True, help='Домен сайта')
-    parser.add_argument('--email', required=True, help='Email для входа')
-    parser.add_argument('--password', required=True, help='Пароль')
-    parser.add_argument('--user-id', type=int, help='ID пользователя Telegram (если личный)')
-    parser.add_argument('--shared', action='store_true', help='Общий аккаунт для всех')
 
-    args = parser.parse_args()
+async def register_account(
+    args: argparse.Namespace,
+) -> None:
+    """Зарегистрировать аккаунт.
 
-    # Создаём аккаунт
+    Args:
+        args: Аргументы командной строки.
+    """
+    user_id = args.user_id or (
+        0 if args.shared else None
+    )
+
+    if user_id is None:
+        logger.error(
+            'Укажите --user-id или --shared',
+        )
+        return
+
     account = Account(
         email=args.email,
         password=args.password,
         domain=args.domain,
-        user_id=args.user_id if args.user_id else (0 if args.shared else None),
+        user_id=user_id,
         is_active=True,
     )
 
-    # Сохраняем
-    storage_path = Path('data/sessions/accounts.json')
-    manager = AccountManager(storage_path)
+    manager = AccountManager(_DEFAULT_STORAGE)
 
     if args.shared:
         await manager.add_account(account)
-        logger.info(f'Добавлен общий аккаунт для {args.domain}')
-    elif args.user_id:
-        await manager.add_account(account, for_user=args.user_id)
-        logger.info(f'Добавлен личный аккаунт для пользователя {args.user_id}')
+        logger.info(
+            'Добавлен общий аккаунт для %s',
+            args.domain,
+        )
     else:
-        logger.error('Укажите --user-id или --shared')
-        return
+        await manager.add_account(
+            account, for_user=args.user_id,
+        )
+        logger.info(
+            'Добавлен личный аккаунт '
+            'для пользователя %d',
+            args.user_id,
+        )
 
     # Проверяем
     test_url = f'https://{args.domain}/test'
-    if args.user_id:
-        retrieved = await manager.get_account_for_url(test_url, args.user_id)
-    else:
-        retrieved = await manager.get_account_for_url(test_url, 999)  # любой пользователь
+    test_uid = args.user_id or 999
+    retrieved = await manager.get_account_for_url(
+        test_url, test_uid,
+    )
 
     if retrieved:
-        logger.info('✓ Аккаунт успешно сохранён и доступен')
+        logger.info(
+            'Аккаунт успешно сохранён и доступен',
+        )
     else:
-        logger.error('✗ Ошибка: аккаунт не найден после сохранения')
+        logger.error(
+            'Аккаунт не найден после сохранения',
+        )
+
+
+def _parse_args() -> argparse.Namespace:
+    """Разобрать аргументы командной строки."""
+    parser = argparse.ArgumentParser(
+        description='Регистрация аккаунтов',
+    )
+    parser.add_argument(
+        '--domain',
+        required=True,
+        help='Домен сайта',
+    )
+    parser.add_argument(
+        '--email',
+        required=True,
+        help='Email для входа',
+    )
+    parser.add_argument(
+        '--password',
+        required=True,
+        help='Пароль',
+    )
+    parser.add_argument(
+        '--user-id',
+        type=int,
+        help='ID пользователя Telegram',
+    )
+    parser.add_argument(
+        '--shared',
+        action='store_true',
+        help='Общий аккаунт для всех',
+    )
+    return parser.parse_args()
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    asyncio.run(register_account(_parse_args()))

@@ -1,4 +1,6 @@
-version: "3.8"
+# docker-compose.yml
+# Запуск: docker compose up -d
+# Логи: docker compose logs -f bot
 
 services:
   redis:
@@ -22,6 +24,8 @@ services:
         condition: service_healthy
     env_file:
       - .env.production
+    environment:
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - ./data:/app/data
     command: uv run python -m bot.main

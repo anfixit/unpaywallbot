@@ -1,78 +1,138 @@
 #!/usr/bin/env python
 """Скрипт для тестирования конкретного URL.
 
-Позволяет быстро проверить, как бот обрабатывает заданную статью.
+Позволяет быстро проверить, как бот обрабатывает
+заданную статью.
+
+Запуск::
+
+    uv run python -m scripts.test_paywall \\
+        https://spiegel.de/plus/artikel -v
 """
 
 import argparse
 import asyncio
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from bot.services.orchestrator import Orchestrator
 from bot.utils.logger import setup_logger
-from bot.utils.text_formatter import truncate_with_ellipsis
+from bot.utils.text_formatter import (
+    truncate_with_ellipsis,
+)
 
 logger = setup_logger(__name__)
 
+_DEFAULT_USER_ID = 123
+_PREVIEW_LENGTH = 500
+_SEPARATOR = '─' * 50
 
-async def test_url(url: str, user_id: int = 123, verbose: bool = False):
-    """Протестировать обработку URL."""
-    print(f'\n🔍 Тестируем URL: {url}\n')
+
+async def test_url(
+    url: str,
+    user_id: int = _DEFAULT_USER_ID,
+    verbose: bool = False,
+) -> None:
+    """Протестировать обработку URL.
+
+    Args:
+        url: URL статьи для тестирования.
+        user_id: ID пользователя (для авторизации).
+        verbose: Показать превью текста.
+    """
+    logger.info('Тестируем URL: %s', url)
 
     orchestrator = Orchestrator()
 
     # Классификация
-    print('📋 Классификация...')
-    paywall_info = await orchestrator.classifier.classify(url)
-    print(f'   Домен: {paywall_info.domain}')
-    print(f'   Тип: {paywall_info.paywall_type}')
-    print(f'   Метод: {paywall_info.suggested_method}')
-    print(f'   Платформа: {paywall_info.platform}')
-    print(f'   Требует авторизации: {paywall_info.requires_auth}')
-    print()
+    logger.info('Классификация...')
+    paywall_info = (
+        await orchestrator.classifier.classify(url)
+    )
+    logger.info('  Домен: %s', paywall_info.domain)
+    logger.info(
+        '  Тип: %s', paywall_info.paywall_type,
+    )
+    logger.info(
+        '  Метод: %s', paywall_info.suggested_method,
+    )
+    logger.info(
+        '  Платформа: %s', paywall_info.platform,
+    )
+    logger.info(
+        '  Требует авторизации: %s',
+        paywall_info.requires_auth,
+    )
 
     # Получение статьи
-    print('📥 Получение статьи...')
+    logger.info('Получение статьи...')
     request = await orchestrator.process_url(
         url=url,
         user_id=user_id,
         username='test_user',
-        skip_cache=True,  # всегда свежий запрос для теста
+        skip_cache=True,
     )
 
     if request.success and request.article:
-        print('✅ Успешно!')
         article = request.article
-        print(f'   Заголовок: {article.title}')
-        print(f'   Автор: {article.author}')
-        print(f'   Длина текста: {len(article.content)} символов')
-        print(f'   Метод: {article.extraction_method}')
+        logger.info('Успешно!')
+        logger.info('  Заголовок: %s', article.title)
+        logger.info('  Автор: %s', article.author)
+        logger.info(
+            '  Длина текста: %d символов',
+            len(article.content),
+        )
+        logger.info(
+            '  Метод: %s',
+            article.extraction_method,
+        )
 
         if verbose and article.content:
-            print('\n📄 Превью текста:')
-            print('─' * 50)
-            print(truncate_with_ellipsis(article.content, 500))
-            print('─' * 50)
+            logger.info('Превью текста:')
+            logger.info(_SEPARATOR)
+            logger.info(
+                '%s',
+                truncate_with_ellipsis(
+                    article.content,
+                    _PREVIEW_LENGTH,
+                ),
+            )
+            logger.info(_SEPARATOR)
     else:
-        print('❌ Ошибка!')
-        print(f'   {request.error_message}')
+        logger.error('Ошибка!')
+        logger.error(
+            '  %s', request.error_message,
+        )
 
-    # Статистика времени
     if request.processing_time_ms:
-        print(f'\n⏱️  Время обработки: {request.processing_time_ms:.0f} мс')
+        logger.info(
+            'Время обработки: %.0f мс',
+            request.processing_time_ms,
+        )
 
-    return request
+
+def _parse_args() -> argparse.Namespace:
+    """Разобрать аргументы командной строки."""
+    parser = argparse.ArgumentParser(
+        description='Тестирование paywall',
+    )
+    parser.add_argument(
+        'url', help='URL статьи',
+    )
+    parser.add_argument(
+        '--user-id',
+        type=int,
+        default=_DEFAULT_USER_ID,
+        help='ID пользователя (для авторизации)',
+    )
+    parser.add_argument(
+        '--verbose', '-v',
+        action='store_true',
+        help='Показать превью текста',
+    )
+    return parser.parse_args()
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Тестирование paywall')
-    parser.add_argument('url', help='URL статьи для тестирования')
-    parser.add_argument('--user-id', type=int, default=123, help='ID пользователя (для авторизации)')
-    parser.add_argument('--verbose', '-v', action='store_true', help='Показать превью текста')
-
-    args = parser.parse_args()
-
-    asyncio.run(test_url(args.url, args.user_id, args.verbose))
+    args = _parse_args()
+    asyncio.run(
+        test_url(args.url, args.user_id, args.verbose),
+    )

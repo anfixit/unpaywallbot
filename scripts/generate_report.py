@@ -1,112 +1,219 @@
 #!/usr/bin/env python
 """Скрипт для генерации отчёта по логам.
 
-Анализирует JSON-логи и выдаёт статистику для диплома.
+Анализирует JSON-логи и выдаёт статистику
+для диплома.
+
+Запуск::
+
+    uv run python -m scripts.generate_report --days 7
 """
 
+import argparse
 import json
-import sys
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from bot.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+_DEFAULT_LOG_DIR = Path('data/logs')
+_DEFAULT_DAYS = 7
 
-def analyze_logs(log_dir: Path = Path('data/logs'), days: int = 7):
-    """Проанализировать логи за последние N дней."""
+
+def _load_logs(
+    log_dir: Path,
+    cutoff: datetime,
+) -> list[dict]:
+    """Загрузить логи новее cutoff.
+
+    Args:
+        log_dir: Директория с логами.
+        cutoff: Минимальная дата файла.
+
+    Returns:
+        Список записей из JSONL-файлов.
+    """
     log_files = sorted(log_dir.glob('access_*.jsonl'))
-
-    if not log_files:
-        print('❌ Логи не найдены')
-        return
-
-    # Фильтруем по дате
-    cutoff = datetime.now() - timedelta(days=days)
-    recent_logs = []
+    records: list[dict] = []
 
     for log_file in log_files:
-        # Извлекаем дату из имени файла access_2026-03-02.jsonl
         try:
-            file_date = datetime.strptime(log_file.stem.replace('access_', ''), '%Y-%m-%d')
-            if file_date >= cutoff:
-                with open(log_file, encoding='utf-8') as f:
-                    for line in f:
-                        recent_logs.append(json.loads(line))
-        except (ValueError, IndexError, json.JSONDecodeError):
-            continue
+            date_str = log_file.stem.replace(
+                'access_', '',
+            )
+            file_date = datetime.strptime(
+                date_str, '%Y-%m-%d',
+            ).replace(tzinfo=UTC)
 
-    print(f'\n📊 Анализ логов за последние {days} дней')
-    print(f'📁 Файлов: {len(log_files)}')
-    print(f'📝 Записей: {len(recent_logs)}\n')
+            if file_date < cutoff:
+                continue
 
-    if not recent_logs:
-        print('Нет данных за указанный период')
+            with open(
+                log_file, encoding='utf-8',
+            ) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        records.append(
+                            json.loads(line),
+                        )
+
+        except (ValueError, json.JSONDecodeError):
+            logger.warning(
+                'Пропущен файл: %s', log_file,
+            )
+
+    return records
+
+
+def _print_user_stats(logs: list[dict]) -> None:
+    """Статистика по пользователям."""
+    users = Counter(
+        log['user_id']
+        for log in logs
+        if 'user_id' in log
+    )
+    logger.info(
+        'Уникальных пользователей: %d', len(users),
+    )
+    logger.info('Топ-5 активных:')
+    for uid, count in users.most_common(5):
+        logger.info('  - %s: %d запросов', uid, count)
+
+
+def _print_success_stats(logs: list[dict]) -> None:
+    """Статистика успешности."""
+    success = sum(
+        1 for log in logs
+        if log.get('status') == 'success'
+    )
+    errors = sum(
+        1 for log in logs
+        if log.get('status') == 'error'
+    )
+    rate = (
+        (success / len(logs)) * 100
+        if logs else 0
+    )
+    logger.info(
+        'Успешно: %d (%.1f%%)', success, rate,
+    )
+    logger.info('Ошибок: %d', errors)
+
+
+def _print_paywall_stats(logs: list[dict]) -> None:
+    """Статистика по типам paywall."""
+    types: Counter = Counter()
+    for log in logs:
+        pw = log.get('paywall')
+        if pw and 'type' in pw:
+            types[pw['type']] += 1
+
+    if not types:
         return
 
-    # Статистика по пользователям
-    users = Counter(log['user_id'] for log in recent_logs if 'user_id' in log)
-    print(f'👥 Уникальных пользователей: {len(users)}')
-    print('   Топ-5 активных:')
-    for user_id, count in users.most_common(5):
-        print(f'     - {user_id}: {count} запросов')
+    total = sum(types.values())
+    logger.info('Типы paywall:')
+    for ptype, count in types.most_common():
+        pct = (count / total) * 100
+        logger.info(
+            '  - %s: %d (%.1f%%)',
+            ptype, count, pct,
+        )
 
-    # Успешность
-    success = sum(1 for log in recent_logs if log.get('status') == 'success')
-    errors = sum(1 for log in recent_logs if log.get('status') == 'error')
-    success_rate = (success / len(recent_logs)) * 100 if recent_logs else 0
-    print(f'\n✅ Успешно: {success} ({success_rate:.1f}%)')
-    print(f'❌ Ошибок: {errors}')
 
-    # Типы событий
-    event_types = Counter(log['event_type'] for log in recent_logs)
-    print('\n📨 Типы событий:')
-    for event_type, count in event_types.most_common():
-        print(f'   - {event_type}: {count}')
+def _print_duration_stats(logs: list[dict]) -> None:
+    """Статистика по времени ответа."""
+    durations = [
+        log['duration_ms']
+        for log in logs
+        if 'duration_ms' in log
+    ]
+    if not durations:
+        return
 
-    # Paywall типы
-    paywall_types = Counter()
-    for log in recent_logs:
-        if 'paywall' in log and log['paywall'] and 'type' in log['paywall']:
-            paywall_types[log['paywall']['type']] += 1
+    avg = sum(durations) / len(durations)
+    logger.info(
+        'Среднее время ответа: %.0f мс', avg,
+    )
+    logger.info(
+        'Максимальное: %.0f мс', max(durations),
+    )
 
-    if paywall_types:
-        print('\n🔒 Типы paywall:')
-        total = sum(paywall_types.values())
-        for ptype, count in paywall_types.most_common():
-            pct = (count / total) * 100
-            print(f'   - {ptype}: {count} ({pct:.1f}%)')
 
-    # Среднее время ответа
-    durations = [log['duration_ms'] for log in recent_logs if 'duration_ms' in log]
-    if durations:
-        avg_duration = sum(durations) / len(durations)
-        max_duration = max(durations)
-        print(f'\n⏱️  Среднее время ответа: {avg_duration:.0f} мс')
-        print(f'   Максимальное: {max_duration:.0f} мс')
-
-    # Ошибки по дням
-    errors_by_day = defaultdict(int)
-    for log in recent_logs:
+def _print_errors_by_day(logs: list[dict]) -> None:
+    """Ошибки по дням."""
+    by_day: dict[str, int] = defaultdict(int)
+    for log in logs:
         if log.get('status') == 'error':
-            day = log['timestamp'][:10]  # YYYY-MM-DD
-            errors_by_day[day] += 1
+            day = log.get('timestamp', '')[:10]
+            if day:
+                by_day[day] += 1
 
-    if errors_by_day:
-        print('\n📆 Ошибки по дням:')
-        for day, count in sorted(errors_by_day.items()):
-            print(f'   - {day}: {count}')
+    if not by_day:
+        return
+
+    logger.info('Ошибки по дням:')
+    for day, count in sorted(by_day.items()):
+        logger.info('  - %s: %d', day, count)
+
+
+def analyze_logs(
+    log_dir: Path = _DEFAULT_LOG_DIR,
+    days: int = _DEFAULT_DAYS,
+) -> None:
+    """Проанализировать логи за последние N дней.
+
+    Args:
+        log_dir: Директория с логами.
+        days: Количество дней для анализа.
+    """
+    if not log_dir.exists():
+        logger.error('Директория не найдена: %s', log_dir)
+        return
+
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    logs = _load_logs(log_dir, cutoff)
+
+    logger.info(
+        'Анализ логов за последние %d дней', days,
+    )
+    logger.info('Записей: %d', len(logs))
+
+    if not logs:
+        logger.info('Нет данных за указанный период')
+        return
+
+    _print_user_stats(logs)
+    _print_success_stats(logs)
+    _print_paywall_stats(logs)
+    _print_duration_stats(logs)
+    _print_errors_by_day(logs)
+
+
+def _parse_args() -> argparse.Namespace:
+    """Разобрать аргументы командной строки."""
+    parser = argparse.ArgumentParser(
+        description='Генерация отчёта по логам',
+    )
+    parser.add_argument(
+        '--days',
+        type=int,
+        default=_DEFAULT_DAYS,
+        help='Количество дней для анализа',
+    )
+    parser.add_argument(
+        '--log-dir',
+        type=Path,
+        default=_DEFAULT_LOG_DIR,
+        help='Директория с логами',
+    )
+    return parser.parse_args()
 
 
 if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser(description='Генерация отчёта по логам')
-    parser.add_argument('--days', type=int, default=7, help='Количество дней для анализа')
-    parser.add_argument('--log-dir', type=Path, default=Path('data/logs'), help='Директория с логами')
-
-    args = parser.parse_args()
+    args = _parse_args()
     analyze_logs(args.log_dir, args.days)

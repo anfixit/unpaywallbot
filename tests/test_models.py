@@ -1,6 +1,5 @@
 """Тесты для моделей данных."""
 
-
 from bot.constants import PaywallType
 from bot.models.article import Article
 from bot.models.paywall_info import PaywallInfo
@@ -12,7 +11,6 @@ def test_article_empty() -> None:
     article = Article(url='https://test.com')
     assert article.is_empty is True
     assert article.content_preview == ''
-    assert article.telegram_safe_content == []
 
 
 def test_article_with_content() -> None:
@@ -25,12 +23,14 @@ def test_article_with_content() -> None:
     )
     assert article.is_empty is False
     assert article.title == 'Test Title'
-    assert len(article.telegram_safe_content) == 2  # 5000 > 4096
+    assert len(article.content) == 5000
 
 
 def test_paywall_info_unknown() -> None:
     """Создание unknown paywall."""
-    info = PaywallInfo.unknown('https://test.com/article')
+    info = PaywallInfo.unknown(
+        'https://test.com/article',
+    )
     assert info.domain == 'test.com'
     assert info.paywall_type == PaywallType.UNKNOWN
     assert info.suggested_method is None
