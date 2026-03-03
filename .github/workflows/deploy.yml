@@ -100,13 +100,22 @@ jobs:
             /home/deploy/.local/bin/uv sync --no-dev
 
             echo "🎭 Playwright уже установлен, пропускаем"
-            # Playwright уже установлен вручную на сервере
 
             echo "🔄 Перезапускаем сервис"
             sudo systemctl restart unpaywallbot
-            sleep 3
+
+            echo "⏳ Ждем 5 секунд для полного запуска..."
+            sleep 5
 
             echo "✅ Проверяем статус"
-            sudo systemctl is-active unpaywallbot
+            # Проверяем более тщательно
+            STATUS=$(sudo systemctl is-active unpaywallbot)
+            echo "Статус: $STATUS"
 
-            echo "🎉 Деплой завершен!"
+            if [ "$STATUS" != "active" ]; then
+              echo "❌ Сервис не активен. Показываем логи:"
+              sudo journalctl -u unpaywallbot -n 20 --no-pager
+              exit 1
+            fi
+
+            echo "🎉 Деплой завершен успешно!"
