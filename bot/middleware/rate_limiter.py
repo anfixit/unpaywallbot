@@ -4,6 +4,7 @@
 Использует Redis для распределённого ограничения.
 """
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -15,9 +16,16 @@ from aiogram.types import (
 )
 
 from bot.config import settings
-from bot.storage.redis_client import redis_client
+from bot.storage.redis_client import get_redis_client
 
 __all__ = ['RateLimiterMiddleware']
+
+logger = logging.getLogger(__name__)
+
+# TTL для Redis-ключей счётчиков (в секундах)
+_TTL_MINUTE = 60
+_TTL_HOUR = 3600
+_TTL_DAY = 86400
 
 
 class RateLimiterMiddleware(BaseMiddleware):
@@ -58,24 +66,35 @@ class RateLimiterMiddleware(BaseMiddleware):
     ) -> Any:
         """Обработать событие с проверкой лимитов."""
         user_id = None
-        if isinstance(event, (Message, CallbackQuery)):
+        if isinstance(
+            event, (Message, CallbackQuery),
+        ):
             user_id = event.from_user.id
 
         if not user_id:
             return await handler(event, data)
 
         # Пропускаем админов
-        admin_ids = getattr(settings, 'admin_ids', [])
+        admin_ids = getattr(
+            settings, 'admin_ids', [],
+        )
         if user_id in admin_ids:
             return await handler(event, data)
 
-        is_allowed, error_msg = await self._check_limits(
-            user_id,
+        is_allowed, error_msg = (
+            await self._check_limits(user_id)
         )
 
         if not is_allowed:
+            logger.info(
+                'Rate limit для user_id=%d: %s',
+                user_id,
+                error_msg,
+            )
             if isinstance(event, Message):
-                await event.answer(f'⏳ {error_msg}')
+                await event.answer(
+                    f'⏳ {error_msg}',
+                )
             elif isinstance(event, CallbackQuery):
                 await event.answer(
                     error_msg, show_alert=True,
@@ -89,12 +108,12 @@ class RateLimiterMiddleware(BaseMiddleware):
         self,
         user_id: int,
     ) -> tuple[bool, str]:
-        """Проверить, не превысил ли пользователь лимиты.
+        """Проверить лимиты пользователя.
 
         Returns:
             (разрешено, сообщение_об_ошибке).
         """
-        client = redis_client.client
+        client = get_redis_client().client
 
         minute_key = f'rate:minute:{user_id}'
         hour_key = f'rate:hour:{user_id}'
@@ -138,7 +157,7 @@ class RateLimiterMiddleware(BaseMiddleware):
         user_id: int,
     ) -> None:
         """Увеличить счётчики запросов."""
-        client = redis_client.client
+        client = get_redis_client().client
 
         minute_key = f'rate:minute:{user_id}'
         hour_key = f'rate:hour:{user_id}'
@@ -146,12 +165,12 @@ class RateLimiterMiddleware(BaseMiddleware):
 
         pipe = client.pipeline()
         pipe.incr(minute_key)
-        pipe.expire(minute_key, 60)
+        pipe.expire(minute_key, _TTL_MINUTE)
 
         pipe.incr(hour_key)
-        pipe.expire(hour_key, 3600)
+        pipe.expire(hour_key, _TTL_HOUR)
 
         pipe.incr(day_key)
-        pipe.expire(day_key, 86400)
+        pipe.expire(day_key, _TTL_DAY)
 
         await pipe.execute()

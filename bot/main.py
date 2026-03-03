@@ -14,12 +14,18 @@ from aiogram.types import BotCommand
 
 from bot.config import settings
 from bot.handlers import callbacks, start, url_handler
-from bot.middleware.access_log import AccessLogMiddleware
-from bot.middleware.rate_limiter import RateLimiterMiddleware
+from bot.middleware.access_log import (
+    AccessLogMiddleware,
+)
+from bot.middleware.rate_limiter import (
+    RateLimiterMiddleware,
+)
 from bot.middleware.whitelist import WhitelistMiddleware
-from bot.storage.redis_client import redis_client
-from bot.utils.logger import setup_logger
+from bot.storage.redis_client import get_redis_client
+from bot.utils.logger import setup_logger, shutdown_logging
 
+# Инициализируем logging-систему (QueueListener)
+# при первом вызове setup_logger.
 logger = setup_logger(__name__)
 
 
@@ -41,36 +47,52 @@ async def set_commands(bot: Bot) -> None:
 async def shutdown() -> None:
     """Корректное завершение работы."""
     logger.info('Завершение работы...')
-    await redis_client.close()
-    logger.info('Redis соединение закрыто')
+    await get_redis_client().close()
+    shutdown_logging()
+    # Последнее сообщение — через print,
+    # т.к. QueueListener уже остановлен
+    print('Бот остановлен.')  # noqa: T201
 
 
 async def main() -> None:
     """Основная функция запуска бота.
 
-    Pydantic Settings валидирует bot_token и encryption_key
-    при создании синглтона settings (§3.4). Если переменные
-    не заданы — ValidationError до вызова main().
+    Pydantic Settings валидирует bot_token
+    и encryption_key при создании синглтона
+    settings (§3.4). Если переменные не заданы —
+    ValidationError до вызова main().
     """
     logger.info(
         'Запуск бота в окружении: %s', settings.env,
     )
 
+    # Подключаем Redis
+    redis = get_redis_client()
+    await redis.connect()
+
     bot = Bot(
         token=settings.bot_token.get_secret_value(),
     )
-    storage = RedisStorage.from_url(settings.redis_url)
+    storage = RedisStorage.from_url(
+        settings.redis_url,
+    )
     dp = Dispatcher(storage=storage)
 
-    # Middleware (порядок важен: whitelist → rate → log)
+    # Middleware (порядок: whitelist → rate → log)
     dp.message.middleware(WhitelistMiddleware())
-    dp.callback_query.middleware(WhitelistMiddleware())
+    dp.callback_query.middleware(
+        WhitelistMiddleware(),
+    )
 
     dp.message.middleware(RateLimiterMiddleware())
-    dp.callback_query.middleware(RateLimiterMiddleware())
+    dp.callback_query.middleware(
+        RateLimiterMiddleware(),
+    )
 
     dp.message.middleware(AccessLogMiddleware())
-    dp.callback_query.middleware(AccessLogMiddleware())
+    dp.callback_query.middleware(
+        AccessLogMiddleware(),
+    )
 
     # Роутеры
     dp.include_router(start.router)
@@ -89,7 +111,9 @@ async def main() -> None:
         loop.add_signal_handler(
             sig,
             lambda: asyncio.create_task(
-                shutdown_polling(polling_task, dp, bot),
+                shutdown_polling(
+                    polling_task, dp, bot,
+                ),
             ),
         )
 
