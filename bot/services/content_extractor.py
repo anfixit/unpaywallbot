@@ -42,6 +42,26 @@ _JS_NOISE_RE = re.compile(
     r'if\s*\(typeof.*?\{[^}]*\}',
 )
 
+# Маркеры paywall-промо в извлечённом тексте.
+# Если текст содержит эти фразы — он мусор.
+_PAYWALL_MARKERS: list[str] = [
+    'weiterlesen mit SPIEGEL+',
+    'Diesen Artikel weiterlesen',
+    'Sie können den Artikel leider nicht',
+    'Jetzt abonnieren',
+    'Freier Zugriff auf alle S+-Artikel',
+    'Freier Zugriff auf alle Z+-Artikel',
+    'Jetzt 30 Tage gratis testen',
+    'Digital-Abo',
+    'Artikel freischalten',
+    'Premium-Abo',
+    'exklusiv für Abonnenten',
+    'subscribe to continue',
+    'subscribers only',
+    'to read this article',
+    'Zugang zu allen Artikeln',
+]
+
 _DEFAULT_MIN_TEXT_LENGTH = 200
 
 
@@ -100,6 +120,16 @@ class ContentExtractor:
         if not text:
             logger.debug(
                 'Все методы извлечения провалились'
+                ' для %s',
+                url,
+            )
+            return None
+
+        # Проверяем: не является ли текст
+        # paywall-промо вместо статьи
+        if self._is_paywall_promo(text):
+            logger.debug(
+                'Текст является paywall-промо'
                 ' для %s',
                 url,
             )
@@ -279,6 +309,26 @@ class ContentExtractor:
             return text
 
         return None
+
+    @staticmethod
+    def _is_paywall_promo(text: str) -> bool:
+        """Проверить, является ли текст промо.
+
+        Args:
+            text: Извлечённый текст.
+
+        Returns:
+            True если текст — paywall-промо.
+        """
+        marker_count = sum(
+            1
+            for marker in _PAYWALL_MARKERS
+            if marker.lower() in text.lower()
+        )
+        # Если 2+ маркера — точно промо
+        if marker_count >= 2:
+            return True
+        return False
 
     def _extract_title(
         self,

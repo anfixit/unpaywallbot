@@ -48,7 +48,9 @@ class GermanFreemiumPlatform:
     def __init__(
         self,
         extractor: ContentExtractor | None = None,
-        account_manager: AccountManager | None = None,
+        account_manager: AccountManager | None = (
+            None
+        ),
     ) -> None:
         """Инициализировать платформу."""
         self.extractor = (
@@ -78,9 +80,19 @@ class GermanFreemiumPlatform:
         )
 
         if not is_premium:
-            return await fetch_via_js_disable(
+            article = await fetch_via_js_disable(
                 url, extractor=self.extractor,
             )
+            # Если экстрактор вернул None —
+            # возможно S+ статья без маркера в URL.
+            # Не падаем молча, а логируем.
+            if article is None:
+                logger.info(
+                    'js_disable вернул None для %s'
+                    ' — возможно скрытый premium',
+                    url,
+                )
+            return article
 
         # Премиум — пробуем headless
         if user_id and self.account_manager:
