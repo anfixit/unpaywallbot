@@ -1,12 +1,13 @@
 """Извлечение основного контента из HTML-страниц.
 
-Стратегия извлечения (waterfall):
-1. readability-lxml — основной метод
-2. JSON-LD ``articleBody`` — структурированные данные
-3. ``<article>`` тег — прямой парсинг DOM
+Стратегия извлечения:
+1. readability-lxml
+2. JSON-LD ``articleBody``
+3. ``<article>`` тег
 
-Если ни один метод не вернул достаточно текста,
-возвращаем None.
+Все три стратегии запускаются параллельно,
+выбирается самый длинный результат — он ближе
+к полному тексту статьи.
 """
 
 import json
@@ -43,7 +44,6 @@ _JS_NOISE_RE = re.compile(
 )
 
 # Маркеры paywall-промо в извлечённом тексте.
-# Если текст содержит эти фразы — он мусор.
 _PAYWALL_MARKERS: list[str] = [
     'weiterlesen mit SPIEGEL+',
     'Diesen Artikel weiterlesen',
@@ -61,6 +61,10 @@ _PAYWALL_MARKERS: list[str] = [
     'to read this article',
     'Zugang zu allen Artikeln',
 ]
+
+# Текст короче этого порога с 2+ маркерами —
+# чистое промо (не статья).
+_PROMO_THRESHOLD = 1500
 
 _DEFAULT_MIN_TEXT_LENGTH = 200
 
@@ -89,8 +93,8 @@ class ContentExtractor:
     ) -> Article | None:
         """Извлечь статью из HTML.
 
-        Пробует три стратегии последовательно:
-        readability → JSON-LD → <article> тег.
+        Запускает все три стратегии, выбирает
+        самый длинный результат.
 
         Args:
             html: HTML-код страницы.
@@ -106,24 +110,36 @@ class ContentExtractor:
         author = self._extract_author(html)
         norm_url = normalize_url(url)
 
-        # 1. readability-lxml (основной)
-        text = self._try_readability(html, url)
+        # Собираем результаты всех стратегий,
+        # выбираем самый длинный — он ближе
+        # к полному тексту статьи.
+        candidates: list[str] = []
 
-        # 2. JSON-LD articleBody (fallback)
-        if not text:
-            text = self._try_json_ld(html, url)
+        readability_text = self._try_readability(
+            html, url,
+        )
+        if readability_text:
+            candidates.append(readability_text)
 
-        # 3. <article> тег (fallback)
-        if not text:
-            text = self._try_article_tag(html, url)
+        json_ld_text = self._try_json_ld(html, url)
+        if json_ld_text:
+            candidates.append(json_ld_text)
 
-        if not text:
+        article_text = self._try_article_tag(
+            html, url,
+        )
+        if article_text:
+            candidates.append(article_text)
+
+        if not candidates:
             logger.debug(
                 'Все методы извлечения провалились'
                 ' для %s',
                 url,
             )
             return None
+
+        text = max(candidates, key=len)
 
         # Проверяем: не является ли текст
         # paywall-промо вместо статьи
@@ -314,6 +330,12 @@ class ContentExtractor:
     def _is_paywall_promo(text: str) -> bool:
         """Проверить, является ли текст промо.
 
+        Текст считается промо только если маркеры
+        занимают значительную часть контента.
+        Короткий текст с 2+ маркерами — промо.
+        Длинный текст с маркерами — статья
+        с paywall-виджетом, не отвергаем.
+
         Args:
             text: Извлечённый текст.
 
@@ -325,10 +347,9 @@ class ContentExtractor:
             for marker in _PAYWALL_MARKERS
             if marker.lower() in text.lower()
         )
-        # Если 2+ маркера — точно промо
-        if marker_count >= 2:
-            return True
-        return False
+        if marker_count < 2:
+            return False
+        return len(text) < _PROMO_THRESHOLD
 
     def _extract_title(
         self,
