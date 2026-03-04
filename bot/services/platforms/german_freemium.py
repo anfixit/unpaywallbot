@@ -1,7 +1,7 @@
 """Платформа для немецких freemium-изданий.
 
 Spiegel S+, Zeit Z+, FAZ F+, Süddeutsche,
-Tagesspiegel, Welt.
+Tagesspiegel, Welt, Berliner Zeitung.
 """
 
 import logging
@@ -37,20 +37,23 @@ class GermanFreemiumPlatform:
     """Обработчик немецких freemium-изданий."""
 
     PREMIUM_URL_PATTERNS: dict[str, str] = {
-        'spiegel.de': r'/plus/|spiegel-plus|s\+',
+        'spiegel.de': (
+            r'/plus/|spiegel-plus|s\+'
+        ),
         'zeit.de': r'/plus/|zeit-plus|z\+',
         'faz.net': r'/faz-plus|f\+',
         'sueddeutsche.de': r'plus|reduced=true',
         'tagesspiegel.de': r'/plus/',
         'welt.de': r'/plus/',
+        'berliner-zeitung.de': r'/plus/',
     }
 
     def __init__(
         self,
         extractor: ContentExtractor | None = None,
-        account_manager: AccountManager | None = (
-            None
-        ),
+        account_manager: (
+            AccountManager | None
+        ) = None,
     ) -> None:
         """Инициализировать платформу."""
         self.extractor = (
@@ -67,6 +70,12 @@ class GermanFreemiumPlatform:
     ) -> Article | None:
         """Обработать URL немецкого издания.
 
+        Стратегия:
+        1. Не-premium → js_disable
+        2. Premium + есть аккаунт → headless_auth
+        3. Premium + нет аккаунта → js_disable
+           (иногда отдаёт) → archive.ph
+
         Args:
             url: URL статьи.
             paywall_info: Информация о paywall.
@@ -80,49 +89,86 @@ class GermanFreemiumPlatform:
         )
 
         if not is_premium:
-            article = await fetch_via_js_disable(
-                url, extractor=self.extractor,
+            return await self._try_free_article(
+                url,
             )
-            # Если экстрактор вернул None —
-            # возможно S+ статья без маркера в URL.
-            # Не падаем молча, а логируем.
-            if article is None:
-                logger.info(
-                    'js_disable вернул None для %s'
-                    ' — возможно скрытый premium',
-                    url,
-                )
-            return article
 
-        # Премиум — пробуем headless
-        if user_id and self.account_manager:
-            try:
-                return await fetch_via_headless_auth(
-                    url,
-                    user_id=user_id,
-                    account_manager=(
-                        self.account_manager
-                    ),
-                    extractor=self.extractor,
-                )
-            except RuntimeError:
-                logger.warning(
-                    'Headless не удался для %s, '
-                    'пробуем archive',
-                    url,
-                )
-                return await fetch_via_archive(
-                    url, extractor=self.extractor,
-                )
-
-        # ?reduced=true для Süddeutsche
+        # Premium-статья: ?reduced=true для SZ
         if 'sueddeutsche.de' in paywall_info.domain:
             modified = self._add_reduced_param(url)
-            return await fetch_via_js_disable(
+            article = await fetch_via_js_disable(
                 modified, extractor=self.extractor,
             )
+            if article and not article.is_empty:
+                return article
 
-        return None
+        # Headless с аккаунтом (если есть)
+        if user_id and self.account_manager:
+            try:
+                article = (
+                    await fetch_via_headless_auth(
+                        url,
+                        user_id=user_id,
+                        account_manager=(
+                            self.account_manager
+                        ),
+                        extractor=self.extractor,
+                    )
+                )
+                if article and not article.is_empty:
+                    return article
+            except RuntimeError:
+                logger.warning(
+                    'Headless не удался для %s',
+                    url,
+                )
+
+        # Fallback: js_disable (иногда premium
+        # контент всё равно в DOM)
+        article = await fetch_via_js_disable(
+            url, extractor=self.extractor,
+        )
+        if article and not article.is_empty:
+            return article
+
+        # Последний шанс: archive.ph
+        logger.info(
+            'Все методы не удались для %s,'
+            ' пробуем archive.ph',
+            url,
+        )
+        return await fetch_via_archive(
+            url, extractor=self.extractor,
+        )
+
+    async def _try_free_article(
+        self,
+        url: str,
+    ) -> Article | None:
+        """Попробовать извлечь бесплатную статью.
+
+        js_disable → archive.ph fallback.
+
+        Args:
+            url: URL статьи.
+
+        Returns:
+            Article или None.
+        """
+        article = await fetch_via_js_disable(
+            url, extractor=self.extractor,
+        )
+        if article and not article.is_empty:
+            return article
+
+        logger.info(
+            'js_disable вернул None для %s'
+            ' — пробуем archive.ph',
+            url,
+        )
+        return await fetch_via_archive(
+            url, extractor=self.extractor,
+        )
 
     def _check_if_premium(
         self,
@@ -141,12 +187,11 @@ class GermanFreemiumPlatform:
                         re.IGNORECASE,
                     ),
                 )
-
         return False
 
     @staticmethod
     def _add_reduced_param(url: str) -> str:
-        """Добавить ?reduced=true для Süddeutsche."""
+        """Добавить ?reduced=true для SZ."""
         parsed = urlparse(url)
         query = parse_qs(parsed.query)
         query['reduced'] = ['true']

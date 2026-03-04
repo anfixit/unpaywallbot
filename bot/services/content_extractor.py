@@ -5,9 +5,8 @@
 2. JSON-LD ``articleBody``
 3. ``<article>`` тег
 
-Все три стратегии запускаются параллельно,
-выбирается самый длинный результат — он ближе
-к полному тексту статьи.
+Все три стратегии запускаются, выбирается самый
+длинный результат — он ближе к полному тексту.
 """
 
 import json
@@ -68,6 +67,20 @@ _PROMO_THRESHOLD = 1500
 
 _DEFAULT_MIN_TEXT_LENGTH = 200
 
+# Блочные теги, после которых нужен перенос строки.
+_BLOCK_TAGS = frozenset({
+    'p', 'div', 'h1', 'h2', 'h3', 'h4',
+    'h5', 'h6', 'li', 'blockquote', 'br',
+    'tr', 'section', 'figcaption',
+})
+
+# Теги-мусор, которые удаляем перед экстракцией.
+_NOISE_TAGS = frozenset({
+    'script', 'style', 'nav', 'footer',
+    'aside', 'noscript', 'iframe',
+    'svg', 'form', 'button',
+})
+
 
 class ContentExtractor:
     """Извлекает читаемый контент из HTML."""
@@ -81,7 +94,7 @@ class ContentExtractor:
         """Инициализировать экстрактор.
 
         Args:
-            min_text_length: Минимальная длина текста
+            min_text_length: Минимальная длина
                 для успешного извлечения.
         """
         self.min_text_length = min_text_length
@@ -98,7 +111,7 @@ class ContentExtractor:
 
         Args:
             html: HTML-код страницы.
-            url: Исходный URL (для нормализации).
+            url: Исходный URL.
 
         Returns:
             Article или None.
@@ -110,9 +123,6 @@ class ContentExtractor:
         author = self._extract_author(html)
         norm_url = normalize_url(url)
 
-        # Собираем результаты всех стратегий,
-        # выбираем самый длинный — он ближе
-        # к полному тексту статьи.
         candidates: list[str] = []
 
         readability_text = self._try_readability(
@@ -141,8 +151,6 @@ class ContentExtractor:
 
         text = max(candidates, key=len)
 
-        # Проверяем: не является ли текст
-        # paywall-промо вместо статьи
         if self._is_paywall_promo(text):
             logger.debug(
                 'Текст является paywall-промо'
@@ -206,10 +214,6 @@ class ContentExtractor:
     ) -> str | None:
         """Извлечь текст из JSON-LD articleBody.
 
-        Многие новостные сайты встраивают полный
-        текст статьи в структурированные данные
-        ``<script type="application/ld+json">``.
-
         Args:
             html: HTML-код страницы.
             url: URL (для логов).
@@ -229,13 +233,17 @@ class ContentExtractor:
                 continue
             try:
                 data = json.loads(script.text)
-            except (json.JSONDecodeError, ValueError):
+            except (
+                json.JSONDecodeError,
+                ValueError,
+            ):
                 continue
 
             body = self._find_article_body(data)
             if (
                 body
-                and len(body) >= self.min_text_length
+                and len(body)
+                >= self.min_text_length
             ):
                 logger.debug(
                     'json-ld: извлечено %d символов'
@@ -252,9 +260,6 @@ class ContentExtractor:
         data: object,
     ) -> str | None:
         """Рекурсивно найти articleBody в JSON-LD.
-
-        JSON-LD может быть dict, list, или
-        вложенная структура с ``@graph``.
 
         Args:
             data: Распарсенный JSON.
@@ -285,9 +290,8 @@ class ContentExtractor:
     ) -> str | None:
         """Извлечь текст из ``<article>`` тега.
 
-        Удаляет шумовые элементы (script, style,
-        nav, footer) из ``<article>`` перед
-        извлечением текста.
+        Удаляет шумовые элементы, сохраняет
+        абзацную структуру.
 
         Args:
             html: HTML-код страницы.
@@ -306,19 +310,23 @@ class ContentExtractor:
             return None
 
         article_el = articles[0]
-        for tag in article_el.xpath(
-            './/script | .//style'
-            ' | .//nav | .//footer',
-        ):
-            tag.getparent().remove(tag)
 
-        text = article_el.text_content()
+        # Удаляем шумовые элементы
+        noise_xpath = ' | '.join(
+            f'.//{tag}' for tag in _NOISE_TAGS
+        )
+        for tag in article_el.xpath(noise_xpath):
+            parent = tag.getparent()
+            if parent is not None:
+                parent.remove(tag)
+
+        text = self._element_to_text(article_el)
         text = self._clean_article_text(text)
 
         if len(text) >= self.min_text_length:
             logger.debug(
-                'article-tag: извлечено %d символов'
-                ' для %s',
+                'article-tag: извлечено %d '
+                'символов для %s',
                 len(text),
                 url,
             )
@@ -375,63 +383,113 @@ class ContentExtractor:
             return None
 
     def _html_to_text(self, html: str) -> str:
-        """Конвертировать HTML в чистый текст.
+        """Конвертировать HTML в текст с абзацами.
+
+        Сохраняет структуру параграфов: блочные
+        теги (p, h1-h6, div, li) разделяются
+        двойным переносом строки.
 
         Args:
             html: HTML-код.
 
         Returns:
-            Чистый текст с нормализованными
-            пробелами.
+            Текст с абзацами.
         """
         try:
             root = lxml.html.fromstring(html)
-            text = root.text_content()
+            text = self._element_to_text(root)
         except (ParserError, ValueError):
             text = self._strip_tags(html)
 
-        return self._normalize_whitespace(text)
+        return self._normalize_paragraphs(text)
+
+    @staticmethod
+    def _element_to_text(
+        element: lxml.html.HtmlElement,
+    ) -> str:
+        """Извлечь текст из элемента с абзацами.
+
+        Вставляет разделитель \\n\\n после блочных
+        тегов (p, div, h1-h6, li...), чтобы
+        сохранить визуальную структуру статьи.
+
+        Args:
+            element: HTML-элемент (lxml).
+
+        Returns:
+            Текст с абзацами.
+        """
+        parts: list[str] = []
+
+        for node in element.iter():
+            # Вставляем разделитель перед блочным
+            if node.tag in _BLOCK_TAGS:
+                parts.append('\n\n')
+
+            if node.text:
+                parts.append(node.text)
+
+            if node.tail:
+                parts.append(node.tail)
+
+        return ''.join(parts)
 
     @staticmethod
     def _clean_article_text(text: str) -> str:
         """Очистить текст из article-тега.
 
-        Удаляет JS-шум и нормализует пробелы.
+        Удаляет JS-шум и нормализует абзацы.
 
         Args:
-            text: Сырой text_content().
+            text: Сырой text.
 
         Returns:
             Очищенный текст.
         """
         text = _JS_NOISE_RE.sub('', text)
-        return ContentExtractor._normalize_whitespace(
+        return ContentExtractor._normalize_paragraphs(
             text,
         )
 
     @staticmethod
-    def _normalize_whitespace(text: str) -> str:
-        """Нормализовать пробелы в тексте.
+    def _normalize_paragraphs(text: str) -> str:
+        """Нормализовать абзацы в тексте.
+
+        Схлопывает множественные пустые строки
+        в одну, убирает пробелы в начале/конце
+        строк, но сохраняет абзацную структуру.
 
         Args:
             text: Сырой текст.
 
         Returns:
-            Текст с нормализованными пробелами.
+            Текст с чистыми абзацами.
         """
-        lines = (
-            line.strip()
-            for line in text.splitlines()
+        # Убираем пробелы внутри строк
+        lines = []
+        for line in text.splitlines():
+            cleaned = ' '.join(line.split())
+            lines.append(cleaned)
+
+        # Схлопываем пустые строки (3+ -> 2)
+        result: list[str] = []
+        prev_empty = False
+        for line in lines:
+            if not line:
+                if not prev_empty:
+                    result.append('')
+                prev_empty = True
+            else:
+                result.append(line)
+                prev_empty = False
+
+        return '\n\n'.join(
+            para.strip()
+            for para in '\n'.join(result).split(
+                '\n\n',
+            )
+            if para.strip()
         )
-        chunks = (
-            chunk.strip()
-            for line in lines
-            for chunk in line.split('  ')
-        )
-        text = ' '.join(
-            chunk for chunk in chunks if chunk
-        )
-        return text.strip()
 
     @staticmethod
     def _strip_tags(html: str) -> str:

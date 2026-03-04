@@ -7,7 +7,9 @@
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.utils.keyboard import (
+    InlineKeyboardBuilder,
+)
 
 __all__ = ['router']
 
@@ -27,30 +29,62 @@ _HELP = (
     '📖 *Как пользоваться*\n\n'
     '1. Скопируй ссылку на статью\n'
     '2. Отправь её мне\n'
-    '3. Если нужна авторизация — я спрошу\n'
-    '4. Получи полный текст\n\n'
+    '3. Получи полный текст\n\n'
+    '*Методы извлечения:*\n'
+    '• Отключение JS - для soft paywall\n'
+    '• Подмена User-Agent — для metered\n'
+    '• Архив (archive.ph) — универсальный'
+    ' fallback\n\n'
     '*Не работает?*\n'
-    '• Проверь, что ссылка ведёт на статью,'
-    ' а не на главную\n'
-    '• Попробуй другую статью\n'
-    '• Подожди — некоторые методы требуют'
-    ' времени'
+    '• Проверь, что ссылка ведёт на '
+    'статью, а не на главную\n'
+    '• Статьи за жёстким paywall могут '
+    'быть недоступны\n'
+    '• Попробуй другую статью того же '
+    'издания'
 )
 
 _PUBLICATIONS = (
     '🌐 *Поддерживаемые издания*\n\n'
-    '*Soft paywall:*\n'
-    '• The Telegraph\n\n'
-    '*Metered paywall:*\n'
-    '• NY Times\n'
-    '• New Yorker, Vanity Fair\n\n'
-    '*Freemium:*\n'
-    '• Spiegel (S+), Zeit (Z+),'
-    ' FAZ (F+)\n'
-    '• Süddeutsche\n\n'
-    '*Hard paywall:*\n'
-    '• Republic.io (нужен аккаунт)\n\n'
-    '📦 Остальные — через archive.ph'
+    '*Работает сейчас (приоритет 1):*\n\n'
+    '🇩🇪 *Германия (freemium):*\n'
+    '• Der Spiegel (S+)\n'
+    '• Die Zeit (Z+)\n'
+    '• FAZ (F+)\n'
+    '• Süddeutsche Zeitung\n'
+    '• Der Tagesspiegel\n'
+    '• Die Welt\n'
+    '• Berliner Zeitung\n\n'
+    '🇺🇸 *США:*\n'
+    '• The New York Times\n'
+    '• The Wall Street Journal\n'
+    '• The Washington Post\n'
+    '• The New Yorker\n'
+    '• Vanity Fair\n'
+    '• Republic (mag)\n\n'
+    '🇬🇧 *Великобритания:*\n'
+    '• The Telegraph\n'
+    '• The Times / Sunday Times\n\n'
+    '━━━━━━━━━━━━━━━\n\n'
+    '*Внедряется (приоритет 2):*\n\n'
+    '🇷🇺 *Россия:*\n'
+    '• Republic, Ведомости, '
+    'Коммерсантъ\n'
+    '• Forbes Russia, Медуза\n'
+    '• РБК Pro, Хакер, The Bell\n'
+    '• Новая газета Европа, '
+    'Секрет фирмы\n'
+    '• The Insider\n\n'
+    '🇺🇸 Bloomberg, Reuters, '
+    'The Verge\n'
+    '🇩🇪 Handelsblatt\n\n'
+    '━━━━━━━━━━━━━━━\n\n'
+    '*Планируется:*\n'
+    'FT, Economist, LA Times, '
+    'Le Monde, NZZ и ещё 80+ изданий '
+    'из 25 стран.\n\n'
+    '📦 Любой неизвестный сайт — '
+    'через archive.ph (fallback)'
 )
 
 _ABOUT = (
@@ -71,10 +105,11 @@ _ABOUT = (
 
 _SHAWARMA = (
     '🌯 *Спасибо за поддержку!*\n\n'
-    'Шаверма — топливо для пет'
-    ' проектов.\n\n'
+    'Шаверма — топливо для'
+    ' пет-проектов.\n\n'
     '💳 [Угостить автора]'
-    '(https://messenger.online.sberbank.ru/sl/oc6Jc8tJawxKY6Q7H)'
+    '(https://messenger.online.sberbank.ru'
+    '/sl/oc6Jc8tJawxKY6Q7H)'
 )
 
 # --- Клавиатуры ---

@@ -1,81 +1,262 @@
 # data/paywall_map.yaml
 # Конфигурация paywall для целевых изданий.
+#
 # Ключ: домен (без www)
-# type: soft / metered / hard / freemium (см. constants.PaywallType)
-# platform: Специфичная логика для данного издания (если есть)
-# method: Базовый метод обхода (js_disable, googlebot_spoof, headless_auth, archive_relay)
+# type: soft | metered | hard | freemium
+# platform: логика для группы изданий
+# method: базовый метод обхода
+# requires_auth: требуется ли авторизация
+# requires_headless: требуется ли headless-браузер
+# priority: 1 = реализовано, 2 = в разработке
+#
+# Типы paywall:
+#   soft     — контент в DOM, скрыт JS-оверлеем
+#   metered  — лимит бесплатных статей
+#   freemium — часть статей бесплатна, часть за подпиской
+#   hard     — контент не отдаётся без авторизации
 
-# --- Немецкие издания (Freemium) ---
-# Особенность: контент частично открыт, но ключевые статьи имеют маркер
-# (S+, Z+, F+, ?reduced=true), который требует проверки в платформе german_freemium.
+# ============================================================
+# ПРИОРИТЕТ 1 — Германия (Freemium)
+# ============================================================
+# Особенность: контент частично открыт, ключевые
+# статьи имеют маркер (S+, Z+, F+, plus, reduced).
+# Платформа german_freemium проверяет маркер в URL
+# и выбирает стратегию.
+
 spiegel.de:
   type: freemium
   platform: german_freemium
   method: js_disable
-  note: "S+ статьи требуют проверки маркера в URL/DOM"
+  priority: 1
+  note: "S+ статьи — маркер в URL"
 
 zeit.de:
   type: freemium
   platform: german_freemium
   method: js_disable
+  priority: 1
   note: "Z+ маркер для премиум-контента"
 
 faz.net:
   type: freemium
   platform: german_freemium
   method: js_disable
+  priority: 1
   note: "FAZ+ (F+) маркер"
 
 sueddeutsche.de:
   type: freemium
   platform: german_freemium
   method: js_disable
-  note: "Параметр ?reduced=true в URL примера"
+  priority: 1
+  note: "?reduced=true в URL"
 
 tagesspiegel.de:
   type: freemium
   platform: german_freemium
   method: js_disable
-  note: "Может иметь схожие freemium-маркеры"
+  priority: 1
+  note: "T+ маркер"
 
 welt.de:
   type: freemium
   platform: german_freemium
   method: js_disable
-  note: "welt Plus (пример из ссылки /plus/)"
+  priority: 1
+  note: "WeltPlus — /plus/ в URL"
 
-# --- Издания Condé Nast (Metered / Soft) ---
-# Используют общую платформу, часто с мягким лимитом.
+berliner-zeitung.de:
+  type: freemium
+  platform: german_freemium
+  method: js_disable
+  priority: 1
+  note: "Freemium, аналогично другим DE"
+
+# ============================================================
+# ПРИОРИТЕТ 1 — Condé Nast (Metered / Soft)
+# ============================================================
+
 newyorker.com:
   type: metered
   platform: conde_nast
   method: googlebot_spoof
+  priority: 1
 
 vanityfair.com:
   type: metered
   platform: conde_nast
   method: googlebot_spoof
+  priority: 1
 
-# --- Американские издания с жестким лимитом (Metered) ---
+# ============================================================
+# ПРИОРИТЕТ 1 — США
+# ============================================================
+
 nytimes.com:
   type: metered
   method: googlebot_spoof
-  note: "Требует хорошей ротации User-Agent и IP"
+  priority: 1
+  note: "Metered — googlebot + archive fallback"
 
-# --- Российское издание (Hard) ---
-republicmag.io: # или republic.ru (основной домен)
+wsj.com:
   type: hard
-  platform: republic
-  method: headless_auth
-  note: "Hard paywall, вероятно, с антибот-защитой"
+  method: archive_relay
+  priority: 1
+  note: "Hard paywall. AMP-версия + ?mod=rsswn (из расширения BPW)"
 
-# --- Британские издания (Soft / Hard) ---
+washingtonpost.com:
+  type: metered
+  method: googlebot_spoof
+  priority: 1
+  note: "Metered — googlebot + js_disable"
+
+# ============================================================
+# ПРИОРИТЕТ 1 — Великобритания
+# ============================================================
+
 telegraph.co.uk:
   type: soft
   method: js_disable
-  note: "Классический soft paywall, контент в DOM"
+  priority: 1
+  note: "Soft — контент в DOM"
 
 thetimes.com:
   type: hard
+  method: archive_relay
+  requires_auth: true
+  requires_headless: true
+  priority: 1
+  note: "Hard paywall"
+
+thetimes.co.uk:
+  type: hard
+  method: archive_relay
+  requires_auth: true
+  requires_headless: true
+  priority: 1
+  note: "Алиас thetimes.com"
+
+# ============================================================
+# ПРИОРИТЕТ 1 — Republic
+# ============================================================
+
+republicmag.io:
+  type: hard
+  platform: republic
   method: headless_auth
-  note: "Полный hard paywall, контента в DOM нет"
+  requires_auth: true
+  requires_headless: true
+  priority: 1
+  note: "Hard paywall, антибот-защита"
+
+republic.ru:
+  type: hard
+  platform: republic
+  method: headless_auth
+  requires_auth: true
+  requires_headless: true
+  priority: 1
+  note: "Основной домен Republic"
+
+# ============================================================
+# ПРИОРИТЕТ 2 — Германия
+# ============================================================
+
+handelsblatt.com:
+  type: metered
+  platform: german_freemium
+  method: js_disable
+  priority: 2
+  note: "Бизнес-издание, metered/freemium"
+
+# ============================================================
+# ПРИОРИТЕТ 2 — Россия
+# ============================================================
+
+forbes.ru:
+  type: metered
+  method: js_disable
+  priority: 2
+  note: "Metered paywall"
+
+thebell.io:
+  type: metered
+  method: js_disable
+  priority: 2
+  note: "Metered / регистрация"
+
+vedomosti.ru:
+  type: hard
+  method: archive_relay
+  priority: 2
+  note: "Hard paywall"
+
+theins.ru:
+  type: soft
+  method: js_disable
+  priority: 2
+  note: "The Insider — soft paywall"
+
+kommersant.ru:
+  type: metered
+  method: js_disable
+  priority: 2
+  note: "Metered paywall"
+
+meduza.io:
+  type: soft
+  method: js_disable
+  priority: 2
+  note: "Soft — большая часть открыта"
+
+novayagazeta.eu:
+  type: soft
+  method: js_disable
+  priority: 2
+  note: "Soft paywall"
+
+pro.rbc.ru:
+  type: hard
+  method: archive_relay
+  priority: 2
+  note: "РБК Pro — hard paywall"
+
+secretmag.ru:
+  type: soft
+  method: js_disable
+  priority: 2
+  note: "Секрет фирмы — soft"
+
+xakep.ru:
+  type: hard
+  method: archive_relay
+  priority: 2
+  note: "Хакер — hard paywall"
+
+# ============================================================
+# ПРИОРИТЕТ 2 — США
+# ============================================================
+
+bloomberg.com:
+  type: hard
+  method: archive_relay
+  priority: 2
+  note: "Hard paywall"
+
+reuters.com:
+  type: metered
+  method: googlebot_spoof
+  priority: 2
+  note: "Metered paywall"
+
+theinformation.com:
+  type: hard
+  method: archive_relay
+  priority: 2
+  note: "Hard paywall"
+
+theverge.com:
+  type: soft
+  method: js_disable
+  priority: 2
+  note: "Soft — контент в DOM"

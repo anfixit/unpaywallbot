@@ -58,7 +58,9 @@ class Orchestrator:
 
     def __init__(
         self,
-        classifier: PaywallClassifier | None = None,
+        classifier: (
+            PaywallClassifier | None
+        ) = None,
         account_manager: (
             AccountManager | None
         ) = None,
@@ -110,16 +112,20 @@ class Orchestrator:
         username: str | None = None,
         skip_cache: bool = False,
     ) -> UserRequest:
-        """Обработать URL: классификация → кеш → обход.
+        """Обработать URL: классификация -> обход.
+
+        Каждая ветка завершается fallback на
+        archive.ph, чтобы минимизировать
+        «не удалось получить статью».
 
         Args:
             url: URL статьи.
             user_id: ID пользователя Telegram.
-            username: Имя пользователя (для логов).
+            username: Имя пользователя.
             skip_cache: Игнорировать кеш.
 
         Returns:
-            UserRequest с результатами обработки.
+            UserRequest с результатами.
         """
         request = UserRequest(
             user_id=user_id or 0,
@@ -144,11 +150,11 @@ class Orchestrator:
             )
             request.paywall_info = paywall_info
 
-            # 3. Неизвестный тип →
-            #    js_disable, затем archive.ph
+            # 3. Неизвестный тип ->
+            #    js_disable -> archive.ph
             if not paywall_info.is_known:
-                article = await self._handle_unknown(
-                    url,
+                article = (
+                    await self._handle_unknown(url)
                 )
                 return self._complete(
                     request, article,
@@ -156,7 +162,7 @@ class Orchestrator:
                     BypassMethod.JS_DISABLE,
                 )
 
-            # 4. Есть платформа → делегируем
+            # 4. Есть платформа -> делегируем
             platform_name = paywall_info.platform
             if (
                 platform_name
@@ -170,13 +176,19 @@ class Orchestrator:
                     paywall_info,
                     user_id=user_id,
                 )
+                # Платформы сами делают fallback,
+                # но если всё равно None:
+                if not article or article.is_empty:
+                    article = (
+                        await self._fallback(url)
+                    )
                 return self._complete(
                     request, article,
                     paywall_info.paywall_type,
                     paywall_info.suggested_method,
                 )
 
-            # 5. Есть метод → используем
+            # 5. Есть метод -> используем + fallback
             if paywall_info.suggested_method:
                 article = (
                     await self._fetch_with_method(
@@ -185,14 +197,20 @@ class Orchestrator:
                         user_id,
                     )
                 )
+                if not article or article.is_empty:
+                    article = (
+                        await self._fallback(url)
+                    )
                 return self._complete(
                     request, article,
                     paywall_info.paywall_type,
                     paywall_info.suggested_method,
                 )
 
-            # 6. Fallback → js_disable + archive
-            article = await self._handle_unknown(url)
+            # 6. Ни платформы, ни метода
+            article = (
+                await self._handle_unknown(url)
+            )
             return self._complete(
                 request, article,
                 PaywallType.UNKNOWN,
@@ -214,9 +232,7 @@ class Orchestrator:
     ) -> Article | None:
         """Обработать неизвестный сайт.
 
-        Стратегия: сначала js_disable (быстро,
-        работает для большинства сайтов), затем
-        archive.ph как fallback.
+        js_disable -> googlebot -> archive.ph.
 
         Args:
             url: URL статьи.
@@ -224,16 +240,50 @@ class Orchestrator:
         Returns:
             Article или None.
         """
+        # 1. js_disable — быстро, работает для
+        #    большинства soft paywall
         article = await fetch_via_js_disable(
             url, extractor=self.extractor,
         )
         if article and not article.is_empty:
             return article
 
+        # 2. googlebot — для metered
         logger.debug(
             'js_disable не помог для %s,'
+            ' пробуем googlebot',
+            url,
+        )
+        article = await fetch_via_googlebot_spoof(
+            url, extractor=self.extractor,
+        )
+        if article and not article.is_empty:
+            return article
+
+        # 3. archive.ph — последний шанс
+        logger.debug(
+            'googlebot не помог для %s,'
             ' пробуем archive.ph',
             url,
+        )
+        return await fetch_via_archive(
+            url, extractor=self.extractor,
+        )
+
+    async def _fallback(
+        self,
+        url: str,
+    ) -> Article | None:
+        """Универсальный fallback: archive.ph.
+
+        Args:
+            url: URL статьи.
+
+        Returns:
+            Article или None.
+        """
+        logger.info(
+            'Fallback archive.ph для %s', url,
         )
         return await fetch_via_archive(
             url, extractor=self.extractor,
@@ -248,16 +298,13 @@ class Orchestrator:
         ) = None,
         method: BypassMethod | None = None,
     ) -> UserRequest:
-        """Завершить запрос и закешировать результат.
-
-        Делегирует установку временных меток и
-        статуса в request.complete() (DRY).
+        """Завершить запрос и закешировать.
 
         Args:
-            request: Текущий запрос пользователя.
-            article: Извлечённая статья (или None).
-            paywall_type: Тип paywall (для статьи).
-            method: Метод обхода (для статьи).
+            request: Текущий запрос.
+            article: Извлечённая статья.
+            paywall_type: Тип paywall.
+            method: Метод обхода.
 
         Returns:
             Тот же request с заполненными полями.
@@ -278,7 +325,7 @@ class Orchestrator:
     def _schedule_cache(
         article: Article,
     ) -> None:
-        """Поставить кеширование в фон (§17.5)."""
+        """Поставить кеширование в фон."""
         task = asyncio.create_task(
             save_article_to_cache(article),
         )
@@ -293,12 +340,12 @@ class Orchestrator:
         method: BypassMethod,
         user_id: int | None = None,
     ) -> Article | None:
-        """Выбрать и вызвать нужный метод обхода.
+        """Вызвать конкретный метод обхода.
 
         Args:
             url: URL статьи.
             method: Метод обхода.
-            user_id: ID пользователя (для headless).
+            user_id: ID пользователя.
 
         Returns:
             Article или None.
@@ -324,13 +371,23 @@ class Orchestrator:
                 or not self.account_manager
             ):
                 return None
-            return await fetch_via_headless_auth(
-                url,
-                user_id=user_id,
-                account_manager=(
-                    self.account_manager
-                ),
-                extractor=self.extractor,
-            )
+            try:
+                return (
+                    await fetch_via_headless_auth(
+                        url,
+                        user_id=user_id,
+                        account_manager=(
+                            self.account_manager
+                        ),
+                        extractor=self.extractor,
+                    )
+                )
+            except RuntimeError:
+                logger.warning(
+                    'headless_auth не удался'
+                    ' для %s',
+                    url,
+                )
+                return None
 
         return None

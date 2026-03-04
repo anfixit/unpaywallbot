@@ -9,7 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 
 from bot.handlers.url_handler import (
-    process_url_with_account,
+    process_url_message,
 )
 
 __all__ = ['router']
@@ -17,19 +17,12 @@ __all__ = ['router']
 router = Router()
 
 
-async def _handle_auth_callback(
+@router.callback_query(F.data == 'try_anyway')
+async def try_anyway(
     callback: CallbackQuery,
     state: FSMContext,
-    has_account: bool,
 ) -> None:
-    """Общая логика для auth_yes и auth_no."""
-    status = (
-        '⏳ Пробую с авторизацией...'
-        if has_account
-        else '⏳ Пробую без авторизации...'
-    )
-    await callback.message.edit_text(status)
-
+    """Пользователь хочет попробовать hard paywall."""
     data = await state.get_data()
     url = data.get('url')
 
@@ -41,37 +34,18 @@ async def _handle_auth_callback(
         await callback.answer()
         return
 
-    await process_url_with_account(
+    await callback.message.edit_text(
+        '⏳ Пробую получить статью...',
+    )
+
+    await process_url_message(
         message=callback.message,
         url=url,
         user_id=callback.from_user.id,
         username=callback.from_user.username,
-        has_account=has_account,
         state=state,
     )
     await callback.answer()
-
-
-@router.callback_query(F.data == 'auth_yes')
-async def auth_yes(
-    callback: CallbackQuery,
-    state: FSMContext,
-) -> None:
-    """Пользователь подтвердил наличие аккаунта."""
-    await _handle_auth_callback(
-        callback, state, has_account=True,
-    )
-
-
-@router.callback_query(F.data == 'auth_no')
-async def auth_no(
-    callback: CallbackQuery,
-    state: FSMContext,
-) -> None:
-    """Пользователь сказал, что аккаунта нет."""
-    await _handle_auth_callback(
-        callback, state, has_account=False,
-    )
 
 
 @router.callback_query(F.data == 'cancel')
@@ -88,9 +62,13 @@ async def cancel_action(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith('page:'))
+@router.callback_query(
+    F.data.startswith('page:'),
+)
 async def pagination(
     callback: CallbackQuery,
 ) -> None:
     """Обработка пагинации (заглушка)."""
-    await callback.answer('Функция в разработке')
+    await callback.answer(
+        'Функция в разработке',
+    )
