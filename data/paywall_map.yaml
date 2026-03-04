@@ -101,6 +101,8 @@ nytimes.com:
 wsj.com:
   type: hard
   method: wsj_bypass
+  requires_auth: false
+  requires_headless: false
   priority: 1
   note: "Facebook referer + ?mod=rsswn + AMP fallback"
 

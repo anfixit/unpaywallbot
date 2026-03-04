@@ -12,6 +12,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from bot.services.telegraph_publisher import (
+    get_telegraph_publisher,
+)
 from bot.utils.text_formatter import split_into_chunks
 from bot.utils.url_utils import (
     is_valid_url,
@@ -91,6 +94,29 @@ async def process_url_message(
             )
         header += f'\n🔗 {article.url}'
 
+        publisher = get_telegraph_publisher()
+
+        if publisher.should_use_telegraph(
+            article.content,
+        ):
+            # Длинная статья → Telegraph
+            telegraph_url = await publisher.publish(
+                title=title,
+                text=article.content,
+                author=article.author,
+                source_url=article.url,
+            )
+            if telegraph_url:
+                await message.answer(
+                    f'{header}'
+                    f'\n\n📖 Полный текст: '
+                    f'{telegraph_url}',
+                    parse_mode='Markdown',
+                    disable_web_page_preview=False,
+                )
+                return
+
+        # Короткая статья или Telegraph упал
         await message.answer(
             header,
             parse_mode='Markdown',

@@ -123,7 +123,10 @@ class PaywallClassifier:
         except ValueError:
             return None
 
-    async def classify(self, url: str) -> PaywallInfo:
+    async def classify(
+        self,
+        url: str,
+    ) -> PaywallInfo:
         """Определить тип paywall для URL.
 
         Args:
@@ -143,20 +146,31 @@ class PaywallClassifier:
         paywall_type = self._parse_paywall_type(
             config.get('type', 'unknown'),
         )
-        suggested_method = self._parse_bypass_method(
-            config.get('method'),
+        suggested_method = (
+            self._parse_bypass_method(
+                config.get('method'),
+            )
         )
 
+        # Defaults из конфига (приоритет).
+        # Если в конфиге не указано — HARD-тип
+        # получает requires_auth/headless=True.
         requires_auth = config.get(
-            'requires_auth', False,
+            'requires_auth',
         )
         requires_headless = config.get(
-            'requires_headless', False,
+            'requires_headless',
         )
 
+        # Автоматика только если конфиг молчит
         if paywall_type == PaywallType.HARD:
-            requires_headless = True
-            requires_auth = True
+            if requires_auth is None:
+                requires_auth = True
+            if requires_headless is None:
+                requires_headless = True
+
+        requires_auth = bool(requires_auth)
+        requires_headless = bool(requires_headless)
 
         platform = config.get('platform')
 
@@ -172,11 +186,11 @@ class PaywallClassifier:
         )
 
     def reload(self) -> None:
-        """Перезагрузить конфигурацию (синхронно)."""
+        """Перезагрузить конфигурацию."""
         self._load_config()
 
     async def reload_async(self) -> None:
-        """Перезагрузить конфигурацию (async-safe).
+        """Перезагрузить конфигурацию (async).
 
         Файловый I/O через to_thread (§17.1).
         """

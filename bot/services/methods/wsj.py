@@ -58,8 +58,15 @@ _WSJ_HEADERS_GOOGLE: dict[str, str] = {
 }
 
 # Паттерн WSJ-статьи для построения AMP URL.
+# Новый формат: /category/subcategory/slug-id
+# Старый формат: /articles/slug-id
 _WSJ_ARTICLE_RE = re.compile(
     r'wsj\.com/articles/(.+)',
+)
+
+# Общий паттерн: любой путь на wsj.com
+_WSJ_PATH_RE = re.compile(
+    r'wsj\.com(/[^?#]+)',
 )
 
 
@@ -81,8 +88,11 @@ def _build_rsswn_url(url: str) -> str:
 def _build_amp_url(url: str) -> str | None:
     """Построить AMP-версию WSJ URL.
 
-    ``https://wsj.com/articles/slug``
-    → ``https://wsj.com/amp/articles/slug``
+    Старый: ``wsj.com/articles/slug``
+    → ``wsj.com/amp/articles/slug``
+
+    Новый: ``wsj.com/lifestyle/careers/slug``
+    → ``wsj.com/amp/lifestyle/careers/slug``
 
     Args:
         url: Оригинальный WSJ URL.
@@ -90,13 +100,22 @@ def _build_amp_url(url: str) -> str | None:
     Returns:
         AMP URL или None если не статья.
     """
+    # Старый формат /articles/...
     match = _WSJ_ARTICLE_RE.search(url)
-    if not match:
-        return None
-    slug = match.group(1)
-    # Убираем query params из slug
-    slug = slug.split('?')[0]
-    return f'https://www.wsj.com/amp/articles/{slug}'
+    if match:
+        slug = match.group(1).split('?')[0]
+        return (
+            'https://www.wsj.com'
+            f'/amp/articles/{slug}'
+        )
+
+    # Новый формат /category/slug-id
+    match = _WSJ_PATH_RE.search(url)
+    if match:
+        path = match.group(1).split('?')[0]
+        return f'https://www.wsj.com/amp{path}'
+
+    return None
 
 
 async def fetch_via_wsj(

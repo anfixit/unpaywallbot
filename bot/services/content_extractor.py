@@ -123,7 +123,16 @@ _JUNK_FRAGMENT_RE = re.compile(
     r'|Quelle:\s.*'
     r'|Automatisch erstellt mit KI.*'
     r'|Mehr Informationen dazu.*'
-    r'|\d{2}\.\d{2}\.\d{4},\s*\d{2}[\.:]\d{2}\s*Uhr'
+    r'|War die Zusammenfassung hilfreich\??'
+    r'|Danke f.r Ihr Feedback!?'
+    r'|hier\.'
+    r'|Von'
+    r'|aus'
+    r'|\u00a9\s.*'
+    r'|DER SPIEGEL \d+/\d+'
+    r'|\d{2}\.\d{2}\.\d{4}'
+    r',\s*\d{2}[\.:]\d{2}\s*Uhr'
+    r'|\u2022'
     r')$',
 )
 
