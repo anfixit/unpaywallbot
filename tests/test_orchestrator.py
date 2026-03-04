@@ -62,6 +62,37 @@ def _patch_cache():
     )
 
 
+def _patch_unknown_chain(
+    js_result=None,
+    googlebot_result=None,
+    archive_result=None,
+):
+    """Патч для всей цепочки _handle_unknown.
+
+    js_disable → googlebot_spoof → archive.
+    """
+    return (
+        patch(
+            'bot.services.orchestrator'
+            '.fetch_via_js_disable',
+            new_callable=AsyncMock,
+            return_value=js_result,
+        ),
+        patch(
+            'bot.services.orchestrator'
+            '.fetch_via_googlebot_spoof',
+            new_callable=AsyncMock,
+            return_value=googlebot_result,
+        ),
+        patch(
+            'bot.services.orchestrator'
+            '.fetch_via_archive',
+            new_callable=AsyncMock,
+            return_value=archive_result,
+        ),
+    )
+
+
 @pytest.mark.asyncio
 async def test_process_url_cache_hit(
     orchestrator,
@@ -93,32 +124,25 @@ async def test_process_url_unknown_paywall(
     orchestrator,
     mock_classifier,
 ) -> None:
-    """Неизвестный paywall — archive.ph."""
+    """Неизвестный paywall — цепочка до archive."""
     mock_classifier.classify.return_value = (
         PaywallInfo.unknown('https://test.com')
     )
 
     p_get, p_save = _patch_cache()
+    p_js, p_google, p_archive = _patch_unknown_chain(
+        js_result=None,
+        googlebot_result=None,
+        archive_result=Article(
+            url='https://test.com',
+            content='Archived content',
+        ),
+    )
 
     with (
-            p_get,
-            p_save,
-            patch(
-                'bot.services.orchestrator'
-                '.fetch_via_js_disable',
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                'bot.services.orchestrator'
-                '.fetch_via_archive',
-                new_callable=AsyncMock,
-                return_value=Article(
-                    url='https://test.com',
-                    content='Archived content',
-                ),
-            ) as mock_archive,
-        ):
+        p_get, p_save,
+        p_js, p_google, p_archive as mock_archive,
+    ):
         result = await orchestrator.process_url(
             'https://test.com',
         )
@@ -174,7 +198,9 @@ async def test_process_url_with_method(
         url='https://nytimes.com/article',
         domain='nytimes.com',
         paywall_type=PaywallType.METERED,
-        suggested_method=BypassMethod.GOOGLEBOT_SPOOF,
+        suggested_method=(
+            BypassMethod.GOOGLEBOT_SPOOF
+        ),
     )
     mock_classifier.classify.return_value = (
         paywall_info
@@ -208,7 +234,7 @@ async def test_process_url_fallback(
     orchestrator,
     mock_classifier,
 ) -> None:
-    """Если всё провалилось — fallback archive.ph."""
+    """Если основной метод не сработал — fallback."""
     paywall_info = PaywallInfo(
         url='https://failing-site.com',
         domain='failing-site.com',
@@ -219,26 +245,19 @@ async def test_process_url_fallback(
     )
 
     p_get, p_save = _patch_cache()
+    p_js, p_google, p_archive = _patch_unknown_chain(
+        js_result=None,
+        googlebot_result=None,
+        archive_result=Article(
+            url='https://failing-site.com',
+            content='Fallback content',
+        ),
+    )
 
     with (
-            p_get,
-            p_save,
-            patch(
-                'bot.services.orchestrator'
-                '.fetch_via_js_disable',
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                'bot.services.orchestrator'
-                '.fetch_via_archive',
-                new_callable=AsyncMock,
-                return_value=Article(
-                    url='https://failing-site.com',
-                    content='Fallback content',
-                ),
-            ) as mock_archive,
-        ):
+        p_get, p_save,
+        p_js, p_google, p_archive as mock_archive,
+    ):
         result = await orchestrator.process_url(
             'https://failing-site.com',
         )

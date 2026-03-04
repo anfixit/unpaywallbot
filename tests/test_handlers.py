@@ -40,7 +40,7 @@ async def test_cmd_help(mock_message) -> None:
 async def test_handle_message_with_url(
     mock_message,
 ) -> None:
-    """Сообщение с URL."""
+    """Сообщение с URL — без requires_auth."""
     mock_message.text = 'https://test.com/article'
     mock_state = AsyncMock()
     mock_state.get_data = AsyncMock(
@@ -72,7 +72,7 @@ async def test_handle_message_with_url(
         ),
         patch(
             'bot.handlers.url_handler'
-            '.process_url_with_account',
+            '.process_url_message',
         ) as mock_process,
     ):
         await url_handler.handle_message(
@@ -101,16 +101,17 @@ async def test_handle_message_no_url(
 
 
 @pytest.mark.asyncio
-async def test_auth_yes_callback(
+async def test_try_anyway_callback(
     mock_message,
 ) -> None:
-    """Callback 'у меня есть аккаунт'."""
+    """Callback 'попробовать всё равно'."""
     callback = Mock()
     callback.message = mock_message
     callback.from_user = Mock()
     callback.from_user.id = 123
     callback.from_user.username = 'testuser'
     callback.answer = AsyncMock()
+    callback.data = 'try_anyway'
 
     mock_state = AsyncMock()
     mock_state.get_data = AsyncMock(
@@ -119,9 +120,9 @@ async def test_auth_yes_callback(
 
     with patch(
         'bot.handlers.callbacks'
-        '.process_url_with_account',
+        '.process_url_message',
     ) as mock_process:
-        await callbacks.auth_yes(
+        await callbacks.try_anyway(
             callback, mock_state,
         )
         mock_process.assert_called_once()
