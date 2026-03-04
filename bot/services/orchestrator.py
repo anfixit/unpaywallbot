@@ -26,6 +26,9 @@ from bot.services.methods.headless_auth import (
 from bot.services.methods.js_disable import (
     fetch_via_js_disable,
 )
+from bot.services.methods.wsj import (
+    fetch_via_wsj,
+)
 from bot.services.paywall_classifier import (
     PaywallClassifier,
 )
@@ -404,5 +407,10 @@ class Orchestrator:
                     url,
                 )
                 return None
+
+        if method == BypassMethod.WSJ_BYPASS:
+            return await fetch_via_wsj(
+                url, extractor=self.extractor,
+            )
 
         return None

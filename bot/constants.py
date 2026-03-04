@@ -45,6 +45,7 @@ class BypassMethod(StrEnum):
     GOOGLEBOT_SPOOF = 'googlebot_spoof'
     HEADLESS_AUTH = 'headless_auth'
     ARCHIVE_RELAY = 'archive_relay'
+    WSJ_BYPASS = 'wsj_bypass'
 
 
 # --- Freemium-маркеры в URL/DOM ---
@@ -59,9 +60,11 @@ FREEMIUM_MARKERS: Final = frozenset({
 
 # --- URL validation ---
 MAX_URL_LENGTH: Final = 2048
-VALID_URL_SCHEMES: Final = frozenset({'http', 'https'})
+VALID_URL_SCHEMES: Final = frozenset({
+    'http', 'https',
+})
 
-# --- URL cleaning (tracking parameters to remove) ---
+# --- URL cleaning ---
 TRACKING_PARAMS: Final = frozenset({
     'fbclid',
     'gclid',

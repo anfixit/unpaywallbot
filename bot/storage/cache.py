@@ -2,12 +2,14 @@
 
 Сохраняет извлечённые статьи, чтобы не долбить
 сайты повторно.
-Ключи: article:{url_hash} → JSON с данными статьи.
+Ключи: ``article:{url_hash}`` → JSON с данными статьи.
 """
 
 import json
 import logging
 from datetime import UTC, datetime
+
+from redis.exceptions import RedisError
 
 from bot.constants import CACHE_TTL_LONG
 from bot.models.article import Article
@@ -46,9 +48,12 @@ async def get_cached_article(
     if not url_hash:
         return None
 
-    client = get_redis_client().client
-    data = await client.get(_article_key(url_hash))
+    try:
+        client = get_redis_client().client
+    except RuntimeError:
+        return None
 
+    data = await client.get(_article_key(url_hash))
     if not data:
         return None
 
@@ -56,14 +61,14 @@ async def get_cached_article(
         article_dict = json.loads(data)
         _restore_datetime(article_dict)
         return Article(**article_dict)
-
     except (
         json.JSONDecodeError,
         TypeError,
         ValueError,
     ) as exc:
         logger.warning(
-            'Ошибка десериализации кеша для %s: %s',
+            'Ошибка десериализации кеша'
+            ' для %s: %s',
             url_hash[:12],
             exc,
         )
@@ -73,7 +78,7 @@ async def get_cached_article(
 def _restore_datetime(
     article_dict: dict,
 ) -> None:
-    """Конвертировать ISO-строки обратно в datetime.
+    """Конвертировать ISO-строки в datetime.
 
     Гарантирует timezone-aware результат (UTC).
     """
@@ -82,7 +87,6 @@ def _restore_datetime(
         if not raw:
             continue
         dt = datetime.fromisoformat(raw)
-        # Если naive — считаем UTC
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=UTC)
         article_dict[field] = dt
@@ -120,10 +124,16 @@ async def save_article_to_cache(
             ),
         )
         return True
-
     except (TypeError, ValueError) as exc:
         logger.warning(
             'Ошибка сериализации статьи %s: %s',
+            url_hash[:12],
+            exc,
+        )
+        return False
+    except (RedisError, RuntimeError) as exc:
+        logger.warning(
+            'Ошибка записи в Redis %s: %s',
             url_hash[:12],
             exc,
         )
@@ -141,7 +151,9 @@ def _serialize_article(
         'title': article.title,
         'author': article.author,
         'published_at': (
-            pub_at.isoformat() if pub_at else None
+            pub_at.isoformat()
+            if pub_at
+            else None
         ),
         'extracted_at': (
             article.extracted_at.isoformat()
@@ -162,8 +174,7 @@ async def invalidate_article_cache(
         url: URL статьи.
 
     Returns:
-        True если удалили или ключа не было,
-        False при ошибке.
+        True если удалили или ключа не было.
     """
     url_hash = get_url_hash(url)
     if not url_hash:
@@ -175,11 +186,11 @@ async def invalidate_article_cache(
             _article_key(url_hash),
         )
         return True
-
-    except Exception:
-        logger.exception(
-            'Ошибка удаления кеша: %s',
+    except (RedisError, RuntimeError) as exc:
+        logger.warning(
+            'Ошибка удаления кеша: %s — %s',
             url_hash[:12],
+            exc,
         )
         return False
 
@@ -208,9 +219,10 @@ async def get_cache_stats() -> dict[str, int]:
                 memory_bytes / 1024 / 1024, 2,
             ),
         }
-
-    except Exception:
-        logger.exception('Ошибка получения статистики')
+    except (RedisError, RuntimeError) as exc:
+        logger.warning(
+            'Ошибка получения статистики: %s', exc,
+        )
         return {
             'articles_count': 0,
             'memory_bytes': 0,

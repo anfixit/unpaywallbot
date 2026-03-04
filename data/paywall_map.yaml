@@ -100,9 +100,9 @@ nytimes.com:
 
 wsj.com:
   type: hard
-  method: archive_relay
+  method: wsj_bypass
   priority: 1
-  note: "Hard paywall. AMP-версия + ?mod=rsswn (из расширения BPW)"
+  note: "Facebook referer + ?mod=rsswn + AMP fallback"
 
 washingtonpost.com:
   type: metered
