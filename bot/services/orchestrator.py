@@ -325,7 +325,22 @@ class Orchestrator:
     def _schedule_cache(
         article: Article,
     ) -> None:
-        """Поставить кеширование в фон."""
+        """Поставить кеширование в фон.
+
+        Не падает если Redis не подключён —
+        кеш опционален.
+        """
+        try:
+            # Проверяем что Redis доступен
+            from bot.storage.redis_client import (
+                get_redis_client,
+            )
+            redis = get_redis_client()
+            if redis._redis is None:
+                return
+        except Exception:
+            return
+
         task = asyncio.create_task(
             save_article_to_cache(article),
         )
