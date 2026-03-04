@@ -7,7 +7,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Tests](https://img.shields.io/badge/tests-pytest-orange.svg)](https://docs.pytest.org/)
 
-**Дипломный проект по информационной безопасности**
+**Pet-проект по информационной безопасности**
 Автор: [anfixit](https://github.com/anfixit)
 
 ---
