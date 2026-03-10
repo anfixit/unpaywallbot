@@ -12,9 +12,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from bot.services.telegraph_publisher import (
-    get_telegraph_publisher,
-)
 from bot.utils.text_formatter import split_into_chunks
 from bot.utils.url_utils import (
     is_valid_url,
@@ -43,6 +40,20 @@ def _get_orchestrator():
 
 _URL_PATTERN = re.compile(r'https?://[^\s]+')
 
+
+def _get_telegraph_publisher():
+    """Lazy import telegraph publisher.
+
+    Returns None если модуль или зависимость
+    ``telegraph`` не установлены.
+    """
+    try:
+        from bot.services.telegraph_publisher import (
+            get_telegraph_publisher,
+        )
+        return get_telegraph_publisher()
+    except (ImportError, ModuleNotFoundError):
+        return None
 
 def extract_url(text: str) -> str | None:
     """Извлечь первый URL из текста."""
@@ -94,9 +105,9 @@ async def process_url_message(
             )
         header += f'\n🔗 {article.url}'
 
-        publisher = get_telegraph_publisher()
+        publisher = _get_telegraph_publisher()
 
-        if publisher.should_use_telegraph(
+        if publisher and publisher.should_use_telegraph(
             article.content,
         ):
             # Длинная статья → Telegraph

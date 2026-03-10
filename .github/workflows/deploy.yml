@@ -185,26 +185,19 @@ jobs:
 
             chmod 600 .env.production
 
-            echo "📦 Устанавливаем зависимости (без dev)"
-            /home/deploy/.local/bin/uv sync --no-dev
-
-            echo "🎭 Playwright уже установлен, пропускаем"
-
-            echo "🔄 Перезапускаем сервис"
-            sudo systemctl restart unpaywallbot
+            echo "🔄 Перезапускаем контейнеры"
+            docker-compose down
+            docker-compose up -d --build
 
             echo "⏳ Ждем 10 секунд для полного запуска..."
             sleep 10
 
-            echo "📊 Статус сервиса:"
-            sudo systemctl status unpaywallbot --no-pager || true
-
             echo "✅ Проверяем статус"
-            if sudo systemctl is-active --quiet unpaywallbot; then
+            if docker ps | grep -q unpaywallbot_bot; then
               echo "🎉 Деплой завершен успешно!"
             else
-              echo "❌ Сервис не активен. Последние логи:"
-              sudo journalctl -u unpaywallbot -n 30 --no-pager
+              echo "❌ Контейнер не запустился. Логи:"
+              docker logs unpaywallbot_bot_1 --tail 30
               exit 1
             fi
 
