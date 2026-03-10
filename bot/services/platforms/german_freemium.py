@@ -2,6 +2,12 @@
 
 Spiegel S+, Zeit Z+, FAZ F+, Süddeutsche,
 Tagesspiegel, Welt, Berliner Zeitung.
+
+Цепочка методов:
+1. js_disable — быстро, работает для бесплатных
+2. googlebot_spoof — отдаёт полный S+/WELTplus
+   контент (проверено curl: 424KB / 753KB)
+3. archive.ph — последний шанс
 """
 
 import logging
@@ -21,6 +27,9 @@ from bot.services.content_extractor import (
 from bot.services.methods.archive_relay import (
     fetch_via_archive,
 )
+from bot.services.methods.googlebot_spoof import (
+    fetch_via_googlebot_spoof,
+)
 from bot.services.methods.headless_auth import (
     fetch_via_headless_auth,
 )
@@ -31,6 +40,10 @@ from bot.services.methods.js_disable import (
 __all__ = ['GermanFreemiumPlatform']
 
 logger = logging.getLogger(__name__)
+
+# Если js_disable вернул меньше — считаем
+# что это лид, а не полная статья.
+_MIN_ARTICLE_LENGTH = 500
 
 
 class GermanFreemiumPlatform:
@@ -71,10 +84,10 @@ class GermanFreemiumPlatform:
         """Обработать URL немецкого издания.
 
         Стратегия:
-        1. Не-premium → js_disable
-        2. Premium + есть аккаунт → headless_auth
-        3. Premium + нет аккаунта → js_disable
-           (иногда отдаёт) → archive.ph
+        1. js_disable (быстро)
+        2. Если мало текста → googlebot_spoof
+        3. Premium + аккаунт → headless_auth
+        4. archive.ph как fallback
 
         Args:
             url: URL статьи.
@@ -93,16 +106,38 @@ class GermanFreemiumPlatform:
                 url,
             )
 
-        # Premium-статья: ?reduced=true для SZ
+        # Premium: ?reduced=true для SZ
         if 'sueddeutsche.de' in paywall_info.domain:
             modified = self._add_reduced_param(url)
             article = await fetch_via_js_disable(
                 modified, extractor=self.extractor,
             )
-            if article and not article.is_empty:
+            if self._is_full_article(article):
                 return article
 
-        # Headless с аккаунтом (если есть)
+        # 1. js_disable — иногда premium
+        #    контент всё равно в DOM
+        article = await fetch_via_js_disable(
+            url, extractor=self.extractor,
+        )
+        if self._is_full_article(article):
+            return article
+
+        # 2. googlebot_spoof — немецкие сайты
+        #    отдают полный контент Googlebot
+        logger.info(
+            'js_disable: %d символов для %s'
+            ' — пробуем googlebot',
+            len(article.content) if article else 0,
+            url,
+        )
+        article = await fetch_via_googlebot_spoof(
+            url, extractor=self.extractor,
+        )
+        if self._is_full_article(article):
+            return article
+
+        # 3. Headless с аккаунтом
         if user_id and self.account_manager:
             try:
                 article = (
@@ -115,7 +150,7 @@ class GermanFreemiumPlatform:
                         extractor=self.extractor,
                     )
                 )
-                if article and not article.is_empty:
+                if self._is_full_article(article):
                     return article
             except RuntimeError:
                 logger.warning(
@@ -123,18 +158,10 @@ class GermanFreemiumPlatform:
                     url,
                 )
 
-        # Fallback: js_disable (иногда premium
-        # контент всё равно в DOM)
-        article = await fetch_via_js_disable(
-            url, extractor=self.extractor,
-        )
-        if article and not article.is_empty:
-            return article
-
-        # Последний шанс: archive.ph
+        # 4. archive.ph — последний шанс
         logger.info(
-            'Все методы не удались для %s,'
-            ' пробуем archive.ph',
+            'Все методы не удались для %s'
+            ' — пробуем archive.ph',
             url,
         )
         return await fetch_via_archive(
@@ -147,7 +174,7 @@ class GermanFreemiumPlatform:
     ) -> Article | None:
         """Попробовать извлечь бесплатную статью.
 
-        js_disable → archive.ph fallback.
+        js_disable → googlebot → archive fallback.
 
         Args:
             url: URL статьи.
@@ -158,16 +185,47 @@ class GermanFreemiumPlatform:
         article = await fetch_via_js_disable(
             url, extractor=self.extractor,
         )
-        if article and not article.is_empty:
+        if self._is_full_article(article):
+            return article
+
+        # Мало текста — пробуем googlebot
+        logger.info(
+            'js_disable: %d символов для %s'
+            ' — пробуем googlebot',
+            len(article.content) if article else 0,
+            url,
+        )
+        article = await fetch_via_googlebot_spoof(
+            url, extractor=self.extractor,
+        )
+        if self._is_full_article(article):
             return article
 
         logger.info(
-            'js_disable вернул None для %s'
+            'googlebot не помог для %s'
             ' — пробуем archive.ph',
             url,
         )
         return await fetch_via_archive(
             url, extractor=self.extractor,
+        )
+
+    @staticmethod
+    def _is_full_article(
+        article: Article | None,
+    ) -> bool:
+        """Проверить что статья не лид.
+
+        Args:
+            article: Извлечённая статья.
+
+        Returns:
+            True если текст достаточно длинный.
+        """
+        if not article or article.is_empty:
+            return False
+        return len(article.content) >= (
+            _MIN_ARTICLE_LENGTH
         )
 
     def _check_if_premium(
