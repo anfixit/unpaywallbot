@@ -11,6 +11,12 @@ from bot.services.platforms.german_freemium import (
     GermanFreemiumPlatform,
 )
 
+# Контент длиннее _MIN_ARTICLE_LENGTH (500),
+# чтобы _is_full_article() вернул True.
+_FULL_CONTENT = 'A' * 600
+
+_MODULE = 'bot.services.platforms.german_freemium'
+
 
 @pytest.fixture
 def platform():
@@ -43,12 +49,11 @@ async def test_german_platform_open_article(
 ) -> None:
     """Открытая статья через js_disable."""
     with patch(
-        'bot.services.platforms.german_freemium'
-        '.fetch_via_js_disable',
+        f'{_MODULE}.fetch_via_js_disable',
         new_callable=AsyncMock,
         return_value=Article(
             url='https://spiegel.de/kultur/artikel',
-            content='Open content',
+            content=_FULL_CONTENT,
         ),
     ) as mock_js:
         result = await platform.handle(
@@ -57,6 +62,7 @@ async def test_german_platform_open_article(
         )
 
     assert result is not None
+    assert len(result.content) >= 500
     mock_js.assert_called_once()
 
 
@@ -65,16 +71,28 @@ async def test_german_platform_premium_article(
     platform_with_auth,
     paywall_info,
 ) -> None:
-    """Премиум-статья пробует headless."""
-    with patch(
-        'bot.services.platforms.german_freemium'
-        '.fetch_via_headless_auth',
-        new_callable=AsyncMock,
-        return_value=Article(
-            url='https://spiegel.de/plus/artikel',
-            content='Premium content',
+    """Премиум: js_disable мало → googlebot."""
+    short_article = Article(
+        url='https://spiegel.de/plus/artikel',
+        content='Лид',  # < 500 символов
+    )
+    full_article = Article(
+        url='https://spiegel.de/plus/artikel',
+        content=_FULL_CONTENT,
+    )
+
+    with (
+        patch(
+            f'{_MODULE}.fetch_via_js_disable',
+            new_callable=AsyncMock,
+            return_value=short_article,
         ),
-    ) as mock_headless:
+        patch(
+            f'{_MODULE}.fetch_via_googlebot_spoof',
+            new_callable=AsyncMock,
+            return_value=full_article,
+        ) as mock_google,
+    ):
         result = await platform_with_auth.handle(
             'https://www.spiegel.de/plus/artikel',
             paywall_info,
@@ -82,7 +100,43 @@ async def test_german_platform_premium_article(
         )
 
     assert result is not None
-    mock_headless.assert_called_once()
+    assert len(result.content) >= 500
+    mock_google.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_german_platform_fallback_archive(
+    platform,
+    paywall_info,
+) -> None:
+    """Если js_disable и googlebot не помогли."""
+    with (
+        patch(
+            f'{_MODULE}.fetch_via_js_disable',
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            f'{_MODULE}.fetch_via_googlebot_spoof',
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            f'{_MODULE}.fetch_via_archive',
+            new_callable=AsyncMock,
+            return_value=Article(
+                url='https://spiegel.de/artikel',
+                content=_FULL_CONTENT,
+            ),
+        ) as mock_archive,
+    ):
+        result = await platform.handle(
+            'https://www.spiegel.de/kultur/artikel',
+            paywall_info,
+        )
+
+    assert result is not None
+    mock_archive.assert_called_once()
 
 
 def test_check_if_premium(platform) -> None:
