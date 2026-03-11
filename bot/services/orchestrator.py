@@ -7,6 +7,8 @@
 import asyncio
 import logging
 
+import httpx
+
 from bot.auth.account_manager import AccountManager
 from bot.constants import BypassMethod, PaywallType
 from bot.models.article import Article
@@ -236,6 +238,8 @@ class Orchestrator:
         """Обработать неизвестный сайт.
 
         js_disable -> googlebot -> archive.ph.
+        Каждый шаг обёрнут в try/except — сетевые
+        ошибки не должны прерывать цепочку.
 
         Args:
             url: URL статьи.
@@ -245,11 +249,22 @@ class Orchestrator:
         """
         # 1. js_disable — быстро, работает для
         #    большинства soft paywall
-        article = await fetch_via_js_disable(
-            url, extractor=self.extractor,
-        )
-        if article and not article.is_empty:
-            return article
+        try:
+            article = await fetch_via_js_disable(
+                url, extractor=self.extractor,
+            )
+            if article and not article.is_empty:
+                return article
+        except (
+            httpx.HTTPError,
+            OSError,
+        ):
+            logger.debug(
+                'js_disable: сетевая ошибка'
+                ' для %s',
+                url,
+                exc_info=True,
+            )
 
         # 2. googlebot — для metered
         logger.debug(
@@ -257,11 +272,24 @@ class Orchestrator:
             ' пробуем googlebot',
             url,
         )
-        article = await fetch_via_googlebot_spoof(
-            url, extractor=self.extractor,
-        )
-        if article and not article.is_empty:
-            return article
+        try:
+            article = (
+                await fetch_via_googlebot_spoof(
+                    url, extractor=self.extractor,
+                )
+            )
+            if article and not article.is_empty:
+                return article
+        except (
+            httpx.HTTPError,
+            OSError,
+        ):
+            logger.debug(
+                'googlebot: сетевая ошибка'
+                ' для %s',
+                url,
+                exc_info=True,
+            )
 
         # 3. archive.ph — последний шанс
         logger.debug(
@@ -269,9 +297,21 @@ class Orchestrator:
             ' пробуем archive.ph',
             url,
         )
-        return await fetch_via_archive(
-            url, extractor=self.extractor,
-        )
+        try:
+            return await fetch_via_archive(
+                url, extractor=self.extractor,
+            )
+        except (
+            httpx.HTTPError,
+            OSError,
+        ):
+            logger.warning(
+                'archive.ph: сетевая ошибка'
+                ' для %s',
+                url,
+                exc_info=True,
+            )
+            return None
 
     async def _fallback(
         self,
@@ -288,9 +328,21 @@ class Orchestrator:
         logger.info(
             'Fallback archive.ph для %s', url,
         )
-        return await fetch_via_archive(
-            url, extractor=self.extractor,
-        )
+        try:
+            return await fetch_via_archive(
+                url, extractor=self.extractor,
+            )
+        except (
+            httpx.HTTPError,
+            OSError,
+        ):
+            logger.warning(
+                'archive.ph fallback: сетевая'
+                ' ошибка для %s',
+                url,
+                exc_info=True,
+            )
+            return None
 
     def _complete(
         self,
@@ -363,7 +415,7 @@ class Orchestrator:
         Args:
             url: URL статьи.
             method: Метод обхода.
-            user_id: ID пользователя.
+            user_id: ID пользователя (headless).
 
         Returns:
             Article или None.

@@ -5,6 +5,8 @@
 возвращает чистый HTML.
 """
 
+import logging
+
 import httpx
 
 from bot.constants import DEFAULT_TIMEOUT_SECONDS
@@ -16,9 +18,11 @@ from bot.utils.url_utils import normalize_url
 
 __all__ = ['fetch_via_js_disable']
 
+logger = logging.getLogger(__name__)
+
 _DEFAULT_USER_AGENT = (
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
-    'AppleWebKit/537.36'
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X'
+    ' 10_15_7) AppleWebKit/537.36'
 )
 
 
@@ -36,6 +40,11 @@ async def fetch_via_js_disable(
 
     Returns:
         Article или None.
+
+    Raises:
+        httpx.HTTPError: Сетевая ошибка (таймаут,
+            отказ соединения и т.п.). Вызывающий
+            код должен обработать.
     """
     norm_url = normalize_url(url)
     if not norm_url:
@@ -58,11 +67,19 @@ async def fetch_via_js_disable(
             headers={
                 'User-Agent': _DEFAULT_USER_AGENT,
                 'Accept': (
-                    'text/html,application/xhtml+xml'
+                    'text/html,'
+                    'application/xhtml+xml'
                 ),
             },
         )
-        response.raise_for_status()
+
+        if response.status_code >= 400:
+            logger.debug(
+                'js_disable: HTTP %d для %s',
+                response.status_code,
+                url,
+            )
+            return None
 
         content_type = response.headers.get(
             'content-type', '',

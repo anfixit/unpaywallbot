@@ -99,7 +99,9 @@ _NOISE_TAGS = frozenset({
 _NOISE_CLASS_PATTERNS = re.compile(
     r'paywall|newsletter|subscribe|social'
     r'|share|comment|related|sidebar|ad-'
-    r'|banner|promo|overlay',
+    r'|banner|promo|overlay|abo-|premium'
+    r'|offer|conversion|regwall|gate'
+    r'|piano-|plenigo|paywall-portal',
     re.IGNORECASE,
 )
 
@@ -419,6 +421,20 @@ class ContentExtractor:
                 parent = el.getparent()
                 if parent is not None:
                     parent.remove(el)
+
+        # Удаляем по data-атрибутам (paywall-
+        # порталы: piano, plenigo, споты и т.п.)
+        for el in element.xpath(
+            './/*[@data-piano-id]'
+            ' | .//*[@data-plenigo-id]'
+            ' | .//*[@data-paywall]'
+            ' | .//*[contains(@class, "abo")]'
+            ' | .//*[contains(@id, "paywall")]'
+            ' | .//*[contains(@id, "piano")]'
+        ):
+            parent = el.getparent()
+            if parent is not None:
+                parent.remove(el)
 
     @staticmethod
     def _is_paywall_promo(text: str) -> bool:
