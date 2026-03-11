@@ -45,7 +45,7 @@ _JS_NOISE_RE = re.compile(
 # Маркеры paywall-промо в извлечённом тексте.
 _PAYWALL_MARKERS: list[str] = [
     'weiterlesen mit SPIEGEL+',
-    'Diesen Artikel',
+    'Diesen Artikel weiterlesen',
     'Sie können den Artikel leider nicht',
     'Jetzt abonnieren',
     'Freier Zugriff auf alle S+-Artikel',
@@ -59,10 +59,6 @@ _PAYWALL_MARKERS: list[str] = [
     'subscribers only',
     'to read this article',
     'Zugang zu allen Artikeln',
-    'WELTplus',
-    'Bereits Abonnent',
-    'Alle WELTplus Inhalte',
-    'Jetzt testen',
 ]
 
 # Маркеры обрезки — если найдены, значит текст
@@ -426,23 +422,14 @@ class ContentExtractor:
                 if parent is not None:
                     parent.remove(el)
 
-        # Удаляем по data-атрибутам (paywall-
-        # порталы: piano, plenigo, споты и т.п.)
-        for el in element.xpath(
-            './/*[@data-piano-id]'
-            ' | .//*[@data-plenigo-id]'
-            ' | .//*[@data-paywall]'
-            ' | .//*[contains(@class, "abo")]'
-            ' | .//*[contains(@id, "paywall")]'
-            ' | .//*[contains(@id, "piano")]'
-        ):
-            parent = el.getparent()
-            if parent is not None:
-                parent.remove(el)
-
     @staticmethod
     def _is_paywall_promo(text: str) -> bool:
         """Проверить, является ли текст промо.
+
+        Два критерия (любой = промо):
+        1. Короткий текст (< 1500) с 2+ маркерами
+        2. Любой текст с 4+ маркерами — слишком
+           много paywall-фраз для реальной статьи
 
         Args:
             text: Извлечённый текст.
@@ -450,14 +437,22 @@ class ContentExtractor:
         Returns:
             True если текст — paywall-промо.
         """
+        lower = text.lower()
         marker_count = sum(
             1
             for marker in _PAYWALL_MARKERS
-            if marker.lower() in text.lower()
+            if marker.lower() in lower
         )
         if marker_count < 2:
             return False
-        return len(text) < _PROMO_THRESHOLD
+        # Короткий текст с маркерами — промо
+        if len(text) < _PROMO_THRESHOLD:
+            return True
+        # Длинный текст с 4+ маркерами — промо
+        # (реальная статья не содержит столько
+        # paywall-фраз даже с виджетом в футере)
+        _heavy_promo_count = 4
+        return marker_count >= _heavy_promo_count
 
     @staticmethod
     def _is_truncated(text: str) -> bool:
@@ -670,9 +665,6 @@ class ContentExtractor:
     ) -> str | None:
         """Извлечь имя автора из HTML.
 
-        Фильтрует мусор: URL, «Von», «aus»,
-        слишком короткие значения.
-
         Args:
             html: Полный HTML страницы.
 
@@ -685,19 +677,6 @@ class ContentExtractor:
             )
             if match:
                 author = match.group(1).strip()
-                if not author:
-                    continue
-                # URL — не автор
-                if author.startswith(('http', '/')):
-                    continue
-                # Слишком короткие / мусорные
-                if author.lower() in (
-                    'von', 'aus', 'by', 'author',
-                    'redaktion', 'admin',
-                ):
-                    continue
-                # Минимум 3 символа
-                if len(author) < 3:
-                    continue
-                return author
+                if author:
+                    return author
         return None
