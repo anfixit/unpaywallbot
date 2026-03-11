@@ -45,7 +45,7 @@ _JS_NOISE_RE = re.compile(
 # Маркеры paywall-промо в извлечённом тексте.
 _PAYWALL_MARKERS: list[str] = [
     'weiterlesen mit SPIEGEL+',
-    'Diesen Artikel weiterlesen',
+    'Diesen Artikel',
     'Sie können den Artikel leider nicht',
     'Jetzt abonnieren',
     'Freier Zugriff auf alle S+-Artikel',
@@ -59,6 +59,10 @@ _PAYWALL_MARKERS: list[str] = [
     'subscribers only',
     'to read this article',
     'Zugang zu allen Artikeln',
+    'WELTplus',
+    'Bereits Abonnent',
+    'Alle WELTplus Inhalte',
+    'Jetzt testen',
 ]
 
 # Маркеры обрезки — если найдены, значит текст
@@ -666,6 +670,9 @@ class ContentExtractor:
     ) -> str | None:
         """Извлечь имя автора из HTML.
 
+        Фильтрует мусор: URL, «Von», «aus»,
+        слишком короткие значения.
+
         Args:
             html: Полный HTML страницы.
 
@@ -678,6 +685,19 @@ class ContentExtractor:
             )
             if match:
                 author = match.group(1).strip()
-                if author:
-                    return author
+                if not author:
+                    continue
+                # URL — не автор
+                if author.startswith(('http', '/')):
+                    continue
+                # Слишком короткие / мусорные
+                if author.lower() in (
+                    'von', 'aus', 'by', 'author',
+                    'redaktion', 'admin',
+                ):
+                    continue
+                # Минимум 3 символа
+                if len(author) < 3:
+                    continue
+                return author
         return None
