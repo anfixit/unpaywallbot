@@ -71,11 +71,7 @@ async def test_german_platform_premium_article(
     platform_with_auth,
     paywall_info,
 ) -> None:
-    """Премиум: js_disable мало → googlebot."""
-    short_article = Article(
-        url='https://spiegel.de/plus/artikel',
-        content='Лид',  # < 500 символов
-    )
+    """Премиум: headless_auth с аккаунтом."""
     full_article = Article(
         url='https://spiegel.de/plus/artikel',
         content=_FULL_CONTENT,
@@ -83,15 +79,10 @@ async def test_german_platform_premium_article(
 
     with (
         patch(
-            f'{_MODULE}.fetch_via_js_disable',
-            new_callable=AsyncMock,
-            return_value=short_article,
-        ),
-        patch(
-            f'{_MODULE}.fetch_via_googlebot_spoof',
+            f'{_MODULE}.fetch_via_headless_auth',
             new_callable=AsyncMock,
             return_value=full_article,
-        ) as mock_google,
+        ) as mock_headless,
     ):
         result = await platform_with_auth.handle(
             'https://www.spiegel.de/plus/artikel',
@@ -101,7 +92,7 @@ async def test_german_platform_premium_article(
 
     assert result is not None
     assert len(result.content) >= 500
-    mock_google.assert_called_once()
+    mock_headless.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -109,15 +100,10 @@ async def test_german_platform_fallback_archive(
     platform,
     paywall_info,
 ) -> None:
-    """Если js_disable и googlebot не помогли."""
+    """Если js_disable не помог — archive."""
     with (
         patch(
             f'{_MODULE}.fetch_via_js_disable',
-            new_callable=AsyncMock,
-            return_value=None,
-        ),
-        patch(
-            f'{_MODULE}.fetch_via_googlebot_spoof',
             new_callable=AsyncMock,
             return_value=None,
         ),
