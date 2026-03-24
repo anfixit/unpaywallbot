@@ -20,7 +20,7 @@ from lxml.etree import ParserError
 from bot.models.article import Article
 from bot.utils.url_utils import normalize_url
 
-__all__ = ['ContentExtractor']
+__all__ = ["ContentExtractor"]
 
 logger = logging.getLogger(__name__)
 
@@ -37,41 +37,45 @@ _AUTHOR_PATTERNS: list[str] = [
     r'class="[^"]*byline[^"]*"[^>]*>([^<]+)',
 ]
 
-_TAG_RE = re.compile(r'<[^>]+>')
+_TAG_RE = re.compile(r"<[^>]+>")
 _JS_NOISE_RE = re.compile(
-    r'if\s*\(typeof.*?\{[^}]*\}',
+    r"if\s*\(typeof.*?\{[^}]*\}",
 )
 
 # Маркеры paywall-промо в извлечённом тексте.
 _PAYWALL_MARKERS: list[str] = [
-    'weiterlesen mit SPIEGEL+',
-    'Diesen Artikel weiterlesen',
-    'Sie können den Artikel leider nicht',
-    'Jetzt abonnieren',
-    'Freier Zugriff auf alle S+-Artikel',
-    'Freier Zugriff auf alle Z+-Artikel',
-    'Jetzt 30 Tage gratis testen',
-    'Digital-Abo',
-    'Artikel freischalten',
-    'Premium-Abo',
-    'exklusiv für Abonnenten',
-    'subscribe to continue',
-    'subscribers only',
-    'to read this article',
-    'Zugang zu allen Artikeln',
+    "weiterlesen mit SPIEGEL+",
+    "Diesen Artikel",
+    "Sie können den Artikel leider nicht",
+    "Jetzt abonnieren",
+    "Freier Zugriff auf alle S+-Artikel",
+    "Freier Zugriff auf alle Z+-Artikel",
+    "Jetzt 30 Tage gratis testen",
+    "Digital-Abo",
+    "Artikel freischalten",
+    "Premium-Abo",
+    "exklusiv für Abonnenten",
+    "subscribe to continue",
+    "subscribers only",
+    "to read this article",
+    "Zugang zu allen Artikeln",
+    "WELTplus",
+    "Bereits Abonnent",
+    "Alle WELTplus Inhalte",
+    "Jetzt testen",
 ]
 
 # Маркеры обрезки — если найдены, значит текст
 # обрезан paywall (добавляем пометку).
 _TRUNCATION_MARKERS: list[str] = [
-    'Den ganzen Text lesen Sie hier',
-    'Lesen Sie mehr',
-    'Weiterlesen mit',
-    'Jetzt weiterlesen',
-    'Read more',
-    'Continue reading',
-    'Subscribe to read',
-    'To continue reading',
+    "Den ganzen Text lesen Sie hier",
+    "Lesen Sie mehr",
+    "Weiterlesen mit",
+    "Jetzt weiterlesen",
+    "Read more",
+    "Continue reading",
+    "Subscribe to read",
+    "To continue reading",
 ]
 
 # Текст короче этого порога с 2+ маркерами —
@@ -81,27 +85,52 @@ _PROMO_THRESHOLD = 1500
 _DEFAULT_MIN_TEXT_LENGTH = 200
 
 # Блочные теги — перед ними вставляем \n\n.
-_BLOCK_TAGS = frozenset({
-    'p', 'div', 'h1', 'h2', 'h3', 'h4',
-    'h5', 'h6', 'li', 'blockquote', 'br',
-    'tr', 'section', 'figcaption', 'header',
-    'article', 'main',
-})
+_BLOCK_TAGS = frozenset(
+    {
+        "p",
+        "div",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "li",
+        "blockquote",
+        "br",
+        "tr",
+        "section",
+        "figcaption",
+        "header",
+        "article",
+        "main",
+    }
+)
 
 # Теги-мусор, удаляем перед экстракцией.
-_NOISE_TAGS = frozenset({
-    'script', 'style', 'nav', 'footer',
-    'aside', 'noscript', 'iframe',
-    'svg', 'form', 'button', 'figure',
-})
+_NOISE_TAGS = frozenset(
+    {
+        "script",
+        "style",
+        "nav",
+        "footer",
+        "aside",
+        "noscript",
+        "iframe",
+        "svg",
+        "form",
+        "button",
+        "figure",
+    }
+)
 
 # CSS-классы, указывающие на мусорные блоки.
 _NOISE_CLASS_PATTERNS = re.compile(
-    r'paywall|newsletter|subscribe|social'
-    r'|share|comment|related|sidebar|ad-'
-    r'|banner|promo|overlay|abo-|premium'
-    r'|offer|conversion|regwall|gate'
-    r'|piano-|plenigo|paywall-portal',
+    r"paywall|newsletter|subscribe|social"
+    r"|share|comment|related|sidebar|ad-"
+    r"|banner|promo|overlay|abo-|premium"
+    r"|offer|conversion|regwall|gate"
+    r"|piano-|plenigo|paywall-portal",
     re.IGNORECASE,
 )
 
@@ -109,33 +138,33 @@ _NOISE_CLASS_PATTERNS = re.compile(
 # подписи к фото, AI-дисклеймеры.
 # Применяется к каждому абзацу после экстракции.
 _JUNK_LINE_RE = re.compile(
-    r'^('
-    r'X\.com|Facebook|E-Mail|Messenger'
-    r'|WhatsApp|Telegram|LinkedIn|Pocket'
-    r'|Flipboard|Pinterest|Twitter'
-    r'|Reddit|Xing'
-    r')$',
+    r"^("
+    r"X\.com|Facebook|E-Mail|Messenger"
+    r"|WhatsApp|Telegram|LinkedIn|Pocket"
+    r"|Flipboard|Pinterest|Twitter"
+    r"|Reddit|Xing"
+    r")$",
 )
 
 _JUNK_FRAGMENT_RE = re.compile(
-    r'^(?:'
-    r'Foto:\s.*'
-    r'|Photo:\s.*'
-    r'|Bild:\s.*'
-    r'|Quelle:\s.*'
-    r'|Automatisch erstellt mit KI.*'
-    r'|Mehr Informationen dazu.*'
-    r'|War die Zusammenfassung hilfreich\??'
-    r'|Danke f.r Ihr Feedback!?'
-    r'|hier\.'
-    r'|Von'
-    r'|aus'
-    r'|\u00a9\s.*'
-    r'|DER SPIEGEL \d+/\d+'
-    r'|\d{2}\.\d{2}\.\d{4}'
-    r',\s*\d{2}[\.:]\d{2}\s*Uhr'
-    r'|\u2022'
-    r')$',
+    r"^(?:"
+    r"Foto:\s.*"
+    r"|Photo:\s.*"
+    r"|Bild:\s.*"
+    r"|Quelle:\s.*"
+    r"|Automatisch erstellt mit KI.*"
+    r"|Mehr Informationen dazu.*"
+    r"|War die Zusammenfassung hilfreich\??"
+    r"|Danke f.r Ihr Feedback!?"
+    r"|hier\."
+    r"|Von"
+    r"|aus"
+    r"|\u00a9\s.*"
+    r"|DER SPIEGEL \d+/\d+"
+    r"|\d{2}\.\d{2}\.\d{4}"
+    r",\s*\d{2}[\.:]\d{2}\s*Uhr"
+    r"|\u2022"
+    r")$",
 )
 
 
@@ -144,9 +173,7 @@ class ContentExtractor:
 
     def __init__(
         self,
-        min_text_length: int = (
-            _DEFAULT_MIN_TEXT_LENGTH
-        ),
+        min_text_length: int = (_DEFAULT_MIN_TEXT_LENGTH),
     ) -> None:
         """Инициализировать экстрактор.
 
@@ -183,7 +210,8 @@ class ContentExtractor:
         candidates: list[str] = []
 
         readability_text = self._try_readability(
-            html, url,
+            html,
+            url,
         )
         if readability_text:
             candidates.append(readability_text)
@@ -193,15 +221,15 @@ class ContentExtractor:
             candidates.append(json_ld_text)
 
         article_text = self._try_article_tag(
-            html, url,
+            html,
+            url,
         )
         if article_text:
             candidates.append(article_text)
 
         if not candidates:
             logger.debug(
-                'Все методы извлечения провалились'
-                ' для %s',
+                "Все методы извлечения провалились для %s",
                 url,
             )
             return None
@@ -210,8 +238,7 @@ class ContentExtractor:
 
         if self._is_paywall_promo(text):
             logger.debug(
-                'Текст является paywall-промо'
-                ' для %s',
+                "Текст является paywall-промо для %s",
                 url,
             )
             return None
@@ -220,9 +247,7 @@ class ContentExtractor:
         if self._is_truncated(text):
             text = self._strip_truncation_tail(text)
             text += (
-                '\n\n'
-                '--- Текст обрезан paywall. '
-                'Показана бесплатная часть. ---'
+                "\n\n--- Текст обрезан paywall. Показана бесплатная часть. ---"
             )
 
         return Article(
@@ -255,8 +280,7 @@ class ContentExtractor:
                 return text
 
             logger.debug(
-                'readability: текст слишком'
-                ' короткий (%d) для %s',
+                "readability: текст слишком короткий (%d) для %s",
                 len(text),
                 url,
             )
@@ -266,8 +290,7 @@ class ContentExtractor:
             TypeError,
         ):
             logger.debug(
-                'readability: ошибка парсинга'
-                ' для %s',
+                "readability: ошибка парсинга для %s",
                 url,
                 exc_info=True,
             )
@@ -306,14 +329,9 @@ class ContentExtractor:
                 continue
 
             body = self._find_article_body(data)
-            if (
-                body
-                and len(body)
-                >= self.min_text_length
-            ):
+            if body and len(body) >= self.min_text_length:
                 logger.debug(
-                    'json-ld: извлечено %d символов'
-                    ' для %s',
+                    "json-ld: извлечено %d символов для %s",
                     len(body),
                     url,
                 )
@@ -334,11 +352,11 @@ class ContentExtractor:
             Текст articleBody или None.
         """
         if isinstance(data, dict):
-            if 'articleBody' in data:
-                return str(data['articleBody'])
-            if '@graph' in data:
+            if "articleBody" in data:
+                return str(data["articleBody"])
+            if "@graph" in data:
                 return self._find_article_body(
-                    data['@graph'],
+                    data["@graph"],
                 )
         if isinstance(data, list):
             for item in data:
@@ -371,7 +389,7 @@ class ContentExtractor:
         except (ParserError, ValueError):
             return None
 
-        articles = tree.xpath('//article')
+        articles = tree.xpath("//article")
         if not articles:
             return None
 
@@ -383,8 +401,7 @@ class ContentExtractor:
 
         if len(text) >= self.min_text_length:
             logger.debug(
-                'article-tag: извлечено %d '
-                'символов для %s',
+                "article-tag: извлечено %d символов для %s",
                 len(text),
                 url,
             )
@@ -406,21 +423,33 @@ class ContentExtractor:
             element: HTML-элемент.
         """
         # Удаляем по тегам
-        noise_xpath = ' | '.join(
-            f'.//{tag}' for tag in _NOISE_TAGS
-        )
+        noise_xpath = " | ".join(f".//{tag}" for tag in _NOISE_TAGS)
         for tag in element.xpath(noise_xpath):
             parent = tag.getparent()
             if parent is not None:
                 parent.remove(tag)
 
         # Удаляем по CSS-классам
-        for el in element.xpath('.//*[@class]'):
-            cls = el.get('class', '')
+        for el in element.xpath(".//*[@class]"):
+            cls = el.get("class", "")
             if _NOISE_CLASS_PATTERNS.search(cls):
                 parent = el.getparent()
                 if parent is not None:
                     parent.remove(el)
+
+        # Удаляем по data-атрибутам (paywall-
+        # порталы: piano, plenigo, споты и т.п.)
+        for el in element.xpath(
+            ".//*[@data-piano-id]"
+            " | .//*[@data-plenigo-id]"
+            " | .//*[@data-paywall]"
+            ' | .//*[contains(@class, "abo")]'
+            ' | .//*[contains(@id, "paywall")]'
+            ' | .//*[contains(@id, "piano")]'
+        ):
+            parent = el.getparent()
+            if parent is not None:
+                parent.remove(el)
 
     @staticmethod
     def _is_paywall_promo(text: str) -> bool:
@@ -439,9 +468,7 @@ class ContentExtractor:
         """
         lower = text.lower()
         marker_count = sum(
-            1
-            for marker in _PAYWALL_MARKERS
-            if marker.lower() in lower
+            1 for marker in _PAYWALL_MARKERS if marker.lower() in lower
         )
         if marker_count < 2:
             return False
@@ -465,10 +492,7 @@ class ContentExtractor:
             True если найден маркер обрезки.
         """
         lower = text.lower()
-        return any(
-            marker.lower() in lower
-            for marker in _TRUNCATION_MARKERS
-        )
+        return any(marker.lower() in lower for marker in _TRUNCATION_MARKERS)
 
     @staticmethod
     def _strip_truncation_tail(text: str) -> str:
@@ -555,41 +579,44 @@ class ContentExtractor:
         parts: list[str] = []
 
         for node in element.iter():
-            tag = node.tag if isinstance(
-                node.tag, str,
-            ) else ''
+            tag = (
+                node.tag
+                if isinstance(
+                    node.tag,
+                    str,
+                )
+                else ""
+            )
 
             # Блочный тег -> разделитель
             if tag in _BLOCK_TAGS:
-                parts.append('\n\n')
+                parts.append("\n\n")
 
             # <strong>/<b> как единственный ребёнок
             # <p> -> подзаголовок (DE-стиль).
             # Без этого «Übereinander gestapelte
             # SärgeArchäologen» слипается.
-            if tag in ('strong', 'b'):
+            if tag in ("strong", "b"):
                 parent = node.getparent()
                 if (
                     parent is not None
-                    and parent.tag == 'p'
+                    and parent.tag == "p"
                     and len(parent) == 1
-                    and not (
-                        parent.text or ''
-                    ).strip()
+                    and not (parent.text or "").strip()
                 ):
-                    parts.append('\n\n')
+                    parts.append("\n\n")
 
             if node.text:
                 parts.append(node.text)
 
             # <br> -> одинарный перенос
-            if tag == 'br':
-                parts.append('\n')
+            if tag == "br":
+                parts.append("\n")
 
             if node.tail:
                 parts.append(node.tail)
 
-        return ''.join(parts)
+        return "".join(parts)
 
     @staticmethod
     def _clean_article_text(text: str) -> str:
@@ -601,7 +628,7 @@ class ContentExtractor:
         Returns:
             Очищенный текст.
         """
-        text = _JS_NOISE_RE.sub('', text)
+        text = _JS_NOISE_RE.sub("", text)
         return ContentExtractor._normalize_paragraphs(
             text,
         )
@@ -622,7 +649,7 @@ class ContentExtractor:
         """
         lines = []
         for line in text.splitlines():
-            cleaned = ' '.join(line.split())
+            cleaned = " ".join(line.split())
             lines.append(cleaned)
 
         result: list[str] = []
@@ -630,7 +657,7 @@ class ContentExtractor:
         for line in lines:
             if not line:
                 if not prev_empty:
-                    result.append('')
+                    result.append("")
                 prev_empty = True
             else:
                 result.append(line)
@@ -638,8 +665,8 @@ class ContentExtractor:
 
         paragraphs = [
             para.strip()
-            for para in '\n'.join(result).split(
-                '\n\n',
+            for para in "\n".join(result).split(
+                "\n\n",
             )
             if para.strip()
         ]
@@ -647,17 +674,17 @@ class ContentExtractor:
         # Убираем мусорные абзацы: кнопки
         # шаринга, подписи к фото, даты
         cleaned = [
-            p for p in paragraphs
-            if not _JUNK_LINE_RE.match(p)
-            and not _JUNK_FRAGMENT_RE.match(p)
+            p
+            for p in paragraphs
+            if not _JUNK_LINE_RE.match(p) and not _JUNK_FRAGMENT_RE.match(p)
         ]
 
-        return '\n\n'.join(cleaned)
+        return "\n\n".join(cleaned)
 
     @staticmethod
     def _strip_tags(html: str) -> str:
         """Удалить HTML-теги (запасной метод)."""
-        return _TAG_RE.sub('', html)
+        return _TAG_RE.sub("", html)
 
     @staticmethod
     def _extract_author(
@@ -673,10 +700,31 @@ class ContentExtractor:
         """
         for pattern in _AUTHOR_PATTERNS:
             match = re.search(
-                pattern, html, re.IGNORECASE,
+                pattern,
+                html,
+                re.IGNORECASE,
             )
             if match:
                 author = match.group(1).strip()
-                if author:
-                    return author
+                if not author:
+                    continue
+                # URL — не автор
+                if author.startswith(("http", "/")):
+                    continue
+                # Мусорные значения
+                if author.lower() in (
+                    "von",
+                    "aus",
+                    "by",
+                    "author",
+                    "redaktion",
+                    "admin",
+                    "interview:",
+                    "kommentar:",
+                ):
+                    continue
+                # Минимум 3 символа
+                if len(author) < 3:
+                    continue
+                return author
         return None

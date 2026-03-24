@@ -181,12 +181,8 @@ class Orchestrator:
                     paywall_info,
                     user_id=user_id,
                 )
-                # Платформы сами делают fallback,
-                # но если всё равно None:
-                if not article or article.is_empty:
-                    article = (
-                        await self._fallback(url)
-                    )
+                # Платформы сами делают fallback
+                # на archive.ph — не дублируем.
                 return self._complete(
                     request, article,
                     paywall_info.paywall_type,
