@@ -3,9 +3,10 @@
 import asyncio
 import os
 import secrets
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from bot.auth.encryptor import encryptor
 from bot.utils.url_utils import extract_domain
