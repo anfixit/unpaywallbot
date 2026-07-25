@@ -6,12 +6,10 @@ for explicitly configured research environments with owned accounts.
 
 import asyncio
 import logging
-from typing import cast
 
 from playwright.async_api import (
     Page,
     Playwright,
-    SetCookieParam,
     async_playwright,
 )
 from playwright.async_api import (
@@ -96,8 +94,10 @@ async def fetch_via_headless_auth(
         )
 
         if account.session_cookies:
+            # Playwright does not expose SetCookieParam at runtime.
+            # Stored cookies are validated by Playwright on insertion.
             await context.add_cookies(
-                account.session_cookies,
+                account.session_cookies,  # type: ignore[arg-type]
             )
 
         page = await context.new_page()
@@ -152,8 +152,7 @@ async def fetch_via_headless_auth(
 
         cookies = await context.cookies()
         account.session_cookies = [
-            cast(SetCookieParam, cookie)
-            for cookie in cookies
+            dict(cookie) for cookie in cookies
         ]
         await account_manager.save_account(account)
 

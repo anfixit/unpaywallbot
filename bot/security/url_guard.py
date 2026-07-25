@@ -101,7 +101,7 @@ async def ensure_public_url(
         _raise_unsafe('DNS не вернул адресов', request)
 
     addresses = {
-        record[4][0].split('%', 1)[0]
+        str(record[4][0]).split('%', 1)[0]
         for record in records
     }
 
