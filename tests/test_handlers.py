@@ -6,6 +6,8 @@ import pytest
 from aiogram.types import Chat, Message, User
 
 from bot.handlers import callbacks, start, url_handler
+from bot.models.article import Article
+from bot.models.user_request import UserRequest
 
 
 @pytest.fixture
@@ -127,3 +129,56 @@ async def test_try_anyway_callback(
         )
         mock_process.assert_called_once()
         callback.answer.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_process_url_keeps_telegraph_disabled(
+    mock_message,
+) -> None:
+    """Не передавать статью третьей стороне по умолчанию."""
+    status_message = Mock(spec=Message)
+    status_message.delete = AsyncMock()
+    mock_message.answer = AsyncMock(
+        side_effect=[status_message, None, None],
+    )
+    mock_state = AsyncMock()
+    request = UserRequest(
+        user_id=123,
+        original_url='https://example.com/article',
+    )
+    request.complete(
+        Article(
+            url='https://example.com/article',
+            title='Article',
+            content='Public text',
+        ),
+    )
+    orchestrator = AsyncMock()
+    orchestrator.process_url = AsyncMock(
+        return_value=request,
+    )
+
+    with (
+        patch.object(
+            url_handler.settings,
+            'telegraph_enabled',
+            False,
+        ),
+        patch(
+            'bot.handlers.url_handler._get_orchestrator',
+            return_value=orchestrator,
+        ),
+        patch(
+            'bot.handlers.url_handler'
+            '._get_telegraph_publisher',
+        ) as get_publisher,
+    ):
+        await url_handler.process_url_message(
+            message=mock_message,
+            url='https://example.com/article',
+            user_id=123,
+            username='testuser',
+            state=mock_state,
+        )
+
+    get_publisher.assert_not_called()
