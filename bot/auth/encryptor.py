@@ -1,12 +1,9 @@
-"""Шифрование данных сессий и cookies.
-
-Использует Fernet (симметричное шифрование) на основе
-ключа из settings. Все чувствительные данные хранятся
-только в зашифрованном виде.
-"""
+"""Шифрование данных сессий и cookies."""
 
 import base64
+import binascii
 import json
+import secrets
 from typing import Any, cast
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -16,125 +13,211 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import (
 )
 
 from bot.config import settings
-from bot.constants import PBKDF2_ITERATIONS, PBKDF2_SALT
+from bot.constants import (
+    LEGACY_PBKDF2_ITERATIONS,
+    LEGACY_PBKDF2_SALT,
+    PBKDF2_ITERATIONS,
+    PBKDF2_SALT_BYTES,
+)
 
 __all__ = ['Encryptor', 'encryptor']
 
+_FORMAT_VERSION = 2
+
 
 class Encryptor:
-    """Шифрование и дешифрование данных сессий.
-
-    Пример::
-
-        enc = Encryptor()
-        encrypted = enc.encrypt({'cookies': [...]})
-        decrypted = enc.decrypt(encrypted)
-    """
+    """Шифрование и дешифрование данных сессий."""
 
     def __init__(
         self,
         key: bytes | None = None,
+        *,
+        secret: str | None = None,
     ) -> None:
         """Инициализировать шифровальщик.
 
         Args:
-            key: Ключ Fernet (если None, деривируется
-                из settings.encryption_key).
+            key: Готовый Fernet-ключ для тестов и миграций.
+            secret: Парольная фраза. По умолчанию берётся
+                из настроек приложения.
+
+        Raises:
+            ValueError: Переданы одновременно key и secret.
         """
-        if key is None:
-            secret = (
+        if key is not None and secret is not None:
+            msg = 'Передайте key или secret, но не оба'
+            raise ValueError(msg)
+
+        self._fixed_key = key
+        self._secret = secret
+        if key is None and secret is None:
+            self._secret = (
                 settings.encryption_key.get_secret_value()
             )
-            key = self._derive_key(secret)
 
-        self.fernet = Fernet(key)
+        if self._fixed_key is not None:
+            self._legacy_fernet = Fernet(self._fixed_key)
+        else:
+            assert self._secret is not None
+            legacy_key = self._derive_key(
+                self._secret,
+                LEGACY_PBKDF2_SALT,
+                LEGACY_PBKDF2_ITERATIONS,
+            )
+            self._legacy_fernet = Fernet(legacy_key)
 
     @staticmethod
-    def _derive_key(secret: str) -> bytes:
-        """Получить ключ для Fernet из секрета.
-
-        Fernet требует 32 байта в base64-urlsafe.
-        Используем PBKDF2HMAC для деривации из
-        парольной фразы.
-        """
+    def _derive_key(
+        secret: str,
+        salt: bytes,
+        iterations: int,
+    ) -> bytes:
+        """Получить Fernet-ключ через PBKDF2-HMAC-SHA256."""
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
-            salt=PBKDF2_SALT,
-            iterations=PBKDF2_ITERATIONS,
+            salt=salt,
+            iterations=iterations,
         )
         raw_key = kdf.derive(secret.encode('utf-8'))
         return base64.urlsafe_b64encode(raw_key)
 
     def encrypt(self, data: dict[str, Any]) -> str:
-        """Зашифровать данные.
-
-        Args:
-            data: Словарь (cookies, логины, пароли).
-
-        Returns:
-            Зашифрованная строка в base64.
-        """
+        """Зашифровать словарь в версионированный envelope."""
         json_bytes = json.dumps(
-            data, ensure_ascii=False,
+            data,
+            ensure_ascii=False,
+            separators=(',', ':'),
         ).encode('utf-8')
-        encrypted = self.fernet.encrypt(json_bytes)
-        return encrypted.decode('utf-8')
+
+        if self._fixed_key is not None:
+            salt: bytes | None = None
+            fernet = Fernet(self._fixed_key)
+        else:
+            assert self._secret is not None
+            salt = secrets.token_bytes(PBKDF2_SALT_BYTES)
+            key = self._derive_key(
+                self._secret,
+                salt,
+                PBKDF2_ITERATIONS,
+            )
+            fernet = Fernet(key)
+
+        token = fernet.encrypt(json_bytes).decode('ascii')
+        envelope = {
+            'version': _FORMAT_VERSION,
+            'salt': (
+                base64.urlsafe_b64encode(salt).decode('ascii')
+                if salt is not None
+                else None
+            ),
+            'token': token,
+        }
+        return json.dumps(
+            envelope,
+            separators=(',', ':'),
+            sort_keys=True,
+        )
 
     def decrypt(
         self,
         encrypted_data: str,
     ) -> dict[str, Any] | None:
-        """Расшифровать данные.
-
-        Args:
-            encrypted_data: Зашифрованная строка.
-
-        Returns:
-            Исходные данные или None при ошибке
-            (неверный ключ, повреждённые данные).
-        """
+        """Расшифровать новый или legacy-формат."""
         try:
-            decrypted = self.fernet.decrypt(
-                encrypted_data.encode('utf-8'),
+            envelope = json.loads(encrypted_data)
+        except json.JSONDecodeError:
+            return self._decrypt_legacy(encrypted_data)
+
+        if not isinstance(envelope, dict):
+            return None
+        if envelope.get('version') != _FORMAT_VERSION:
+            return None
+
+        token = envelope.get('token')
+        if not isinstance(token, str):
+            return None
+
+        if self._fixed_key is not None:
+            fernet = Fernet(self._fixed_key)
+        else:
+            salt = self._decode_salt(envelope.get('salt'))
+            if salt is None:
+                return None
+            assert self._secret is not None
+            key = self._derive_key(
+                self._secret,
+                salt,
+                PBKDF2_ITERATIONS,
+            )
+            fernet = Fernet(key)
+
+        return self._decrypt_token(fernet, token)
+
+    @staticmethod
+    def _decode_salt(value: object) -> bytes | None:
+        """Проверить и декодировать соль envelope."""
+        if not isinstance(value, str):
+            return None
+        try:
+            salt = base64.b64decode(
+                value,
+                altchars=b'-_',
+                validate=True,
+            )
+        except (binascii.Error, ValueError):
+            return None
+        if len(salt) != PBKDF2_SALT_BYTES:
+            return None
+        return salt
+
+    def _decrypt_legacy(
+        self,
+        encrypted_data: str,
+    ) -> dict[str, Any] | None:
+        """Расшифровать токен старого формата."""
+        return self._decrypt_token(
+            self._legacy_fernet,
+            encrypted_data,
+        )
+
+    @staticmethod
+    def _decrypt_token(
+        fernet: Fernet,
+        token: str,
+    ) -> dict[str, Any] | None:
+        """Расшифровать Fernet token и проверить JSON."""
+        try:
+            decrypted = fernet.decrypt(
+                token.encode('ascii'),
             )
             payload = json.loads(
                 decrypted.decode('utf-8'),
             )
-            if not isinstance(payload, dict):
-                return None
-            return cast(dict[str, Any], payload)
-        except InvalidToken:
+        except (
+            InvalidToken,
+            UnicodeDecodeError,
+            UnicodeEncodeError,
+            json.JSONDecodeError,
+        ):
             return None
-        except json.JSONDecodeError:
+
+        if not isinstance(payload, dict):
             return None
+        return cast(dict[str, Any], payload)
 
     def encrypt_cookies(
         self,
         cookies: list[dict[str, Any]],
     ) -> str:
-        """Зашифровать cookies.
-
-        Args:
-            cookies: Список cookies от браузера.
-
-        Returns:
-            Зашифрованная строка.
-        """
+        """Зашифровать cookies."""
         return self.encrypt({'cookies': cookies})
 
     def decrypt_cookies(
         self,
         encrypted: str,
     ) -> list[dict[str, Any]]:
-        """Расшифровать cookies.
-
-        Args:
-            encrypted: Зашифрованная строка.
-
-        Returns:
-            Список cookies или пустой список.
-        """
+        """Расшифровать cookies."""
         data = self.decrypt(encrypted)
         if not data:
             return []
