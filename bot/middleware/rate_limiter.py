@@ -1,8 +1,4 @@
-"""Middleware для ограничения частоты запросов.
-
-Защищает бота от DOS-атак и чрезмерного использования.
-Использует Redis для распределённого ограничения.
-"""
+"""Atomic Redis rate limiting middleware."""
 
 import logging
 from collections.abc import Awaitable, Callable
@@ -14,28 +10,40 @@ from aiogram.types import (
     Message,
     TelegramObject,
 )
+from redis.exceptions import RedisError
 
-from bot.config import settings
 from bot.storage.redis_client import get_redis_client
 
 __all__ = ['RateLimiterMiddleware']
 
 logger = logging.getLogger(__name__)
 
-# TTL для Redis-ключей счётчиков (в секундах)
 _TTL_MINUTE = 60
 _TTL_HOUR = 3600
 _TTL_DAY = 86400
 
+_RATE_LIMIT_SCRIPT = """
+for index = 1, 3 do
+    local current = tonumber(redis.call('GET', KEYS[index]) or '0')
+    local limit = tonumber(ARGV[index])
+    if current >= limit then
+        return index
+    end
+end
+
+for index = 1, 3 do
+    local value = redis.call('INCR', KEYS[index])
+    if value == 1 then
+        redis.call('EXPIRE', KEYS[index], ARGV[index + 3])
+    end
+end
+
+return 0
+"""
+
 
 class RateLimiterMiddleware(BaseMiddleware):
-    """Ограничивает количество запросов от пользователя.
-
-    Лимиты:
-    - Не более N сообщений в минуту
-    - Не более N сообщений в час
-    - Не более N сообщений в день
-    """
+    """Apply minute, hour and day limits atomically."""
 
     def __init__(
         self,
@@ -43,13 +51,7 @@ class RateLimiterMiddleware(BaseMiddleware):
         rate_per_hour: int = 30,
         rate_per_day: int = 100,
     ) -> None:
-        """Инициализировать middleware.
-
-        Args:
-            rate_per_minute: Макс. сообщений в минуту.
-            rate_per_hour: Макс. сообщений в час.
-            rate_per_day: Макс. сообщений в день.
-        """
+        """Configure limits."""
         self.rate_per_minute = rate_per_minute
         self.rate_per_hour = rate_per_hour
         self.rate_per_day = rate_per_day
@@ -64,113 +66,68 @@ class RateLimiterMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        """Обработать событие с проверкой лимитов."""
-        user_id = None
-        if isinstance(
-            event, (Message, CallbackQuery),
-        ):
-            user_id = event.from_user.id
-
-        if not user_id:
+        """Check and increment counters in one Redis operation."""
+        user = getattr(event, 'from_user', None)
+        if user is None:
             return await handler(event, data)
 
-        # Пропускаем админов
-        admin_ids = getattr(
-            settings, 'admin_ids', [],
-        )
-        if user_id in admin_ids:
-            return await handler(event, data)
-
-        is_allowed, error_msg = (
-            await self._check_limits(user_id)
-        )
-
-        if not is_allowed:
-            logger.info(
-                'Rate limit для user_id=%d: %s',
-                user_id,
-                error_msg,
+        try:
+            blocked_window = await self._consume(user.id)
+        except (RedisError, RuntimeError):
+            logger.exception(
+                'Rate limiter unavailable for user_id=%d',
+                user.id,
             )
-            if isinstance(event, Message):
-                await event.answer(
-                    f'⏳ {error_msg}',
-                )
-            elif isinstance(event, CallbackQuery):
-                await event.answer(
-                    error_msg, show_alert=True,
-                )
+            await self._reply(
+                event,
+                'Сервис временно недоступен. Попробуй позже.',
+            )
             return None
 
-        await self._increment_counters(user_id)
+        if blocked_window:
+            message = {
+                1: 'Слишком много запросов в минуту. Подожди немного.',
+                2: 'Достигнут часовой лимит. Попробуй позже.',
+                3: 'Достигнут дневной лимит. Возвращайся завтра.',
+            }[blocked_window]
+            logger.info(
+                'Rate limit user_id=%d window=%d',
+                user.id,
+                blocked_window,
+            )
+            await self._reply(event, message)
+            return None
+
         return await handler(event, data)
 
-    async def _check_limits(
-        self,
-        user_id: int,
-    ) -> tuple[bool, str]:
-        """Проверить лимиты пользователя.
-
-        Returns:
-            (разрешено, сообщение_об_ошибке).
-        """
+    async def _consume(self, user_id: int) -> int:
+        """Return blocked window number or zero."""
         client = get_redis_client().client
-
-        minute_key = f'rate:minute:{user_id}'
-        hour_key = f'rate:hour:{user_id}'
-        day_key = f'rate:day:{user_id}'
-
-        minute_count = int(
-            await client.get(minute_key) or 0,
+        result = await client.eval(
+            _RATE_LIMIT_SCRIPT,
+            3,
+            f'rate:minute:{user_id}',
+            f'rate:hour:{user_id}',
+            f'rate:day:{user_id}',
+            self.rate_per_minute,
+            self.rate_per_hour,
+            self.rate_per_day,
+            _TTL_MINUTE,
+            _TTL_HOUR,
+            _TTL_DAY,
         )
-        hour_count = int(
-            await client.get(hour_key) or 0,
-        )
-        day_count = int(
-            await client.get(day_key) or 0,
-        )
+        return int(result)
 
-        if minute_count >= self.rate_per_minute:
-            return (
-                False,
-                'Слишком много запросов в минуту. '
-                'Подожди немного.',
-            )
-
-        if hour_count >= self.rate_per_hour:
-            return (
-                False,
-                'Достигнут часовой лимит запросов. '
-                'Попробуй позже.',
-            )
-
-        if day_count >= self.rate_per_day:
-            return (
-                False,
-                'Достигнут дневной лимит. '
-                'Возвращайся завтра.',
-            )
-
-        return True, ''
-
-    async def _increment_counters(
-        self,
-        user_id: int,
+    @staticmethod
+    async def _reply(
+        event: TelegramObject,
+        message: str,
     ) -> None:
-        """Увеличить счётчики запросов."""
-        client = get_redis_client().client
-
-        minute_key = f'rate:minute:{user_id}'
-        hour_key = f'rate:hour:{user_id}'
-        day_key = f'rate:day:{user_id}'
-
-        pipe = client.pipeline()
-        pipe.incr(minute_key)
-        pipe.expire(minute_key, _TTL_MINUTE)
-
-        pipe.incr(hour_key)
-        pipe.expire(hour_key, _TTL_HOUR)
-
-        pipe.incr(day_key)
-        pipe.expire(day_key, _TTL_DAY)
-
-        await pipe.execute()
+        """Reply to a blocked update."""
+        if isinstance(event, Message):
+            await event.answer(f'⏳ {message}')
+        elif isinstance(event, CallbackQuery):
+            await event.answer(
+                message,
+                show_alert=True,
+            )
