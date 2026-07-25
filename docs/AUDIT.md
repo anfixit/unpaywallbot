@@ -51,7 +51,7 @@ Protected assets include:
 
 Primary adversarial actions considered:
 
-- SSRF and DNS rebinding
+- SSRF, redirect abuse, and DNS time-of-check/time-of-use risks
 - redirecting a safe URL to a private address
 - resource exhaustion through large responses or long extraction chains
 - rate-limit races
@@ -78,6 +78,10 @@ Primary adversarial actions considered:
 | DOC-01 | High | README overclaimed publication support and deployment readiness | Fixed |
 | NET-01 | Medium | No overall extraction timeout | Fixed |
 | NET-02 | Medium | Redirect count and declared response size were unbounded | Fixed |
+| NET-03 | High | Chunked or decompressed responses could exceed the memory limit | Fixed |
+| HEAD-03 | High | Playwright requests bypassed the shared outbound URL guard | Fixed with documented residual DNS TOCTOU risk |
+| PRIV-02 | Medium | Long article text was sent to Telegraph by default and HTML was not escaped | Fixed |
+| REDIS-01 | Medium | Cache statistics used blocking Redis `KEYS` | Fixed |
 | UX-01 | Medium | Processing messages could remain after errors | Fixed |
 | UX-02 | Medium | User-controlled metadata could break Telegram Markdown | Fixed |
 | OPS-02 | Medium | No container healthcheck, resource limits, or log rotation | Fixed |
@@ -105,9 +109,37 @@ The control rejects:
 - ports other than 80 and 443
 - DNS results that are loopback, private, link-local, multicast, reserved, or otherwise non-global
 
-DNS resolution is repeated for each outbound request. HTTPX request hooks validate redirect targets before they are contacted.
+DNS resolution is repeated for each outbound request. HTTPX request hooks validate redirect targets before they are contacted. This validation reduces common SSRF paths but does not claim cryptographic protection against every DNS time-of-check/time-of-use race because the transport performs its own connection-time resolution.
 
 Tests cover loopback, RFC1918 networks, IPv6 loopback, and the common `169.254.169.254` metadata address.
+
+### NET-03: actual response-size enforcement
+
+The shared HTTP client now streams and counts decoded response bytes. It
+rejects oversized responses even when `Content-Length` is absent,
+incorrect, chunked, or smaller than the decompressed body.
+
+### HEAD-03: Playwright outbound boundaries
+
+The optional authenticated browser now validates its initial URL, routes
+browser HTTP requests through the public-URL guard, blocks cross-domain
+non-GET requests, blocks service workers, and verifies the domain after
+login. It remains disabled in the default runtime. Because Chromium owns
+the final socket resolution, deployments with hostile DNS assumptions
+should keep this optional component disabled or isolate it at the network
+layer.
+
+### PRIV-02: explicit Telegraph consent
+
+Publishing long text to Telegraph is disabled by default through
+`TELEGRAPH_ENABLED=false`. When explicitly enabled, article text and
+source URLs are HTML-escaped before submission. Documentation now states
+that the content is transferred to a third-party service.
+
+### REDIS-01: non-blocking cache statistics
+
+Cache statistics now iterate keys with Redis `SCAN` instead of the
+blocking `KEYS` command.
 
 ### OPS-01: Redis exposure
 
