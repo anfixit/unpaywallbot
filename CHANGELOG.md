@@ -30,7 +30,9 @@ The format follows Keep a Changelog principles. The project uses semantic versio
 - authenticated browser extraction refuses cross-domain login redirects
 - optional browser requests are checked against outbound URL policy
 - Telegraph publication is explicit opt-in and escapes article HTML
+- archive relay reads existing public snapshots and never creates new ones
 - Redis cache statistics use incremental scanning instead of `KEYS`
+- cache writes complete before a successful request is returned
 - production deployment uses immutable image tags
 - account storage uses a salted versioned encryption envelope
 - account storage writes are validated, serialized, and atomic
@@ -42,6 +44,8 @@ The format follows Keep a Changelog principles. The project uses semantic versio
 - URL parsing with trailing punctuation
 - concurrent JSONL log writes
 - rate-limit race and sliding TTL behavior
+- extraction fallback being recorded as the proposed primary method
+- cache writes being lost during process shutdown
 - misleading documentation about guaranteed publication support
 
 ### Security
@@ -49,6 +53,7 @@ The format follows Keep a Changelog principles. The project uses semantic versio
 - pull-request workflows no longer receive production deployment context
 - third-party SSH and notification actions were removed from deployment
 - raw Telegram identifiers are no longer logged by default
+- request models and rate-limit logs no longer expose raw user IDs or URLs
 - production cannot start accidentally with an empty allowlist
 - account passwords are no longer accepted as process arguments
 - unreadable credential storage fails closed instead of resetting silently
