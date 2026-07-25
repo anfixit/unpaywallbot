@@ -14,8 +14,8 @@ field_validator в Settings.parse_allowed_users
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
-from aiogram.types import Chat, Message, User
 import pytest
+from aiogram.types import Chat, Message, User
 
 from bot.models.article import Article
 

@@ -1,14 +1,13 @@
 """Кеширование статей в Redis.
 
-Сохраняет извлечённые статьи, чтобы не долбить
+Сохраняет извлечённые статьи, чтобы не запрашивать
 сайты повторно.
-Ключи: ``article:{url_hash}`` → JSON с данными статьи.
 """
 
 import json
 import logging
 from datetime import UTC, datetime
-from typing import cast
+from typing import TypedDict
 
 from redis.exceptions import RedisError
 
@@ -29,22 +28,67 @@ logger = logging.getLogger(__name__)
 _KEY_PREFIX = 'article'
 
 
+class CacheStats(TypedDict):
+    """Статистика кеша Redis."""
+
+    articles_count: int
+    memory_bytes: int
+    memory_mb: float
+
+
 def _article_key(url_hash: str) -> str:
     """Сформировать Redis-ключ для статьи."""
     return f'{_KEY_PREFIX}:{url_hash}'
 
 
-async def get_cached_article(
-    url: str,
-) -> Article | None:
-    """Получить статью из кеша по URL.
+def _optional_text(value: object) -> str | None:
+    """Вернуть строку или None для необязательного поля."""
+    return value if isinstance(value, str) else None
 
-    Args:
-        url: URL статьи.
 
-    Returns:
-        Article или None, если нет в кеше.
-    """
+def _parse_datetime(value: object) -> datetime | None:
+    """Преобразовать ISO-строку в timezone-aware datetime."""
+    if not isinstance(value, str) or not value:
+        return None
+
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _deserialize_article(payload: object) -> Article | None:
+    """Проверить JSON кеша и восстановить Article."""
+    if not isinstance(payload, dict):
+        return None
+
+    raw_url = payload.get('url')
+    raw_content = payload.get('content', '')
+    if not isinstance(raw_url, str):
+        return None
+    if not isinstance(raw_content, str):
+        return None
+
+    extracted_at = _parse_datetime(payload.get('extracted_at'))
+    if extracted_at is None:
+        extracted_at = datetime.now(UTC)
+
+    return Article(
+        url=raw_url,
+        content=raw_content,
+        title=_optional_text(payload.get('title')),
+        author=_optional_text(payload.get('author')),
+        published_at=_parse_datetime(payload.get('published_at')),
+        extracted_at=extracted_at,
+        paywall_type=_optional_text(payload.get('paywall_type')),
+        extraction_method=_optional_text(
+            payload.get('extraction_method'),
+        ),
+    )
+
+
+async def get_cached_article(url: str) -> Article | None:
+    """Получить статью из кеша по URL."""
     url_hash = get_url_hash(url)
     if not url_hash:
         return None
@@ -60,55 +104,21 @@ async def get_cached_article(
 
     try:
         payload = json.loads(data)
-        if not isinstance(payload, dict):
-            return None
-        article_dict = cast(dict[str, object], payload)
-        _restore_datetime(article_dict)
-        return Article(**article_dict)
-    except (
-        json.JSONDecodeError,
-        TypeError,
-        ValueError,
-    ) as exc:
+        return _deserialize_article(payload)
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
         logger.warning(
-            'Ошибка десериализации кеша'
-            ' для %s: %s',
+            'Ошибка десериализации кеша для %s: %s',
             url_hash[:12],
             exc,
         )
         return None
 
 
-def _restore_datetime(
-    article_dict: dict[str, object],
-) -> None:
-    """Конвертировать ISO-строки в datetime.
-
-    Гарантирует timezone-aware результат (UTC).
-    """
-    for field in ('extracted_at', 'published_at'):
-        raw = article_dict.get(field)
-        if not isinstance(raw, str) or not raw:
-            continue
-        dt = datetime.fromisoformat(raw)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=UTC)
-        article_dict[field] = dt
-
-
 async def save_article_to_cache(
     article: Article,
     ttl: int = CACHE_TTL_LONG,
 ) -> bool:
-    """Сохранить статью в кеш.
-
-    Args:
-        article: Статья для сохранения.
-        ttl: Время жизни в секундах.
-
-    Returns:
-        True если сохранили, False если ошибка.
-    """
+    """Сохранить статью в кеш."""
     if article.is_empty:
         return False
 
@@ -119,13 +129,10 @@ async def save_article_to_cache(
     try:
         article_dict = _serialize_article(article)
         client = get_redis_client().client
-
         await client.setex(
             _article_key(url_hash),
             ttl,
-            json.dumps(
-                article_dict, ensure_ascii=False,
-            ),
+            json.dumps(article_dict, ensure_ascii=False),
         )
         return True
     except (TypeError, ValueError) as exc:
@@ -144,91 +151,61 @@ async def save_article_to_cache(
         return False
 
 
-def _serialize_article(
-    article: Article,
-) -> dict[str, object]:
-    """Конвертировать Article в dict для JSON."""
-    pub_at = article.published_at
+def _serialize_article(article: Article) -> dict[str, object]:
+    """Конвертировать Article в JSON-совместимый словарь."""
+    published_at = article.published_at
     return {
         'url': article.url,
         'content': article.content,
         'title': article.title,
         'author': article.author,
         'published_at': (
-            pub_at.isoformat()
-            if pub_at
-            else None
+            published_at.isoformat() if published_at else None
         ),
-        'extracted_at': (
-            article.extracted_at.isoformat()
-        ),
+        'extracted_at': article.extracted_at.isoformat(),
         'paywall_type': article.paywall_type,
-        'extraction_method': (
-            article.extraction_method
-        ),
+        'extraction_method': article.extraction_method,
     }
 
 
-async def invalidate_article_cache(
-    url: str,
-) -> bool:
-    """Удалить статью из кеша.
-
-    Args:
-        url: URL статьи.
-
-    Returns:
-        True если удалили или ключа не было.
-    """
+async def invalidate_article_cache(url: str) -> bool:
+    """Удалить статью из кеша."""
     url_hash = get_url_hash(url)
     if not url_hash:
         return False
 
     try:
         client = get_redis_client().client
-        await client.delete(
-            _article_key(url_hash),
-        )
+        await client.delete(_article_key(url_hash))
         return True
     except (RedisError, RuntimeError) as exc:
         logger.warning(
-            'Ошибка удаления кеша: %s — %s',
+            'Ошибка удаления кеша: %s - %s',
             url_hash[:12],
             exc,
         )
         return False
 
 
-async def get_cache_stats() -> dict[str, int]:
-    """Получить статистику использования кеша.
-
-    Returns:
-        Словарь с количеством ключей и памятью.
-    """
+async def get_cache_stats() -> CacheStats:
+    """Получить статистику использования кеша."""
     try:
         client = get_redis_client().client
-
-        keys = await client.keys(
-            f'{_KEY_PREFIX}:*',
-        )
-        count = len(keys)
-
+        keys = await client.keys(f'{_KEY_PREFIX}:*')
         info = await client.info('memory')
-        memory_bytes = info.get('used_memory', 0)
-
+        raw_memory = info.get('used_memory', 0)
+        memory_bytes = (
+            raw_memory if isinstance(raw_memory, int) else 0
+        )
         return {
-            'articles_count': count,
+            'articles_count': len(keys),
             'memory_bytes': memory_bytes,
-            'memory_mb': round(
-                memory_bytes / 1024 / 1024, 2,
-            ),
+            'memory_mb': round(memory_bytes / 1024 / 1024, 2),
         }
     except (RedisError, RuntimeError) as exc:
-        logger.warning(
-            'Ошибка получения статистики: %s', exc,
-        )
+        logger.warning('Ошибка получения статистики: %s', exc)
         return {
             'articles_count': 0,
             'memory_bytes': 0,
-            'memory_mb': 0,
+            'memory_mb': 0.0,
         }
