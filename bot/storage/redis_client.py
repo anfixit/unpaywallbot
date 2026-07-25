@@ -6,8 +6,6 @@
 
 import asyncio
 import logging
-from collections.abc import Awaitable
-from typing import cast
 
 from redis.asyncio import ConnectionPool, Redis
 from redis.exceptions import (
@@ -75,20 +73,14 @@ class RedisClient:
                 self._redis = Redis(
                     connection_pool=self._pool,
                 )
-                ping = cast(
-                    Awaitable[bool],
-                    self._redis.ping(),
-                )
-                await ping
+                await self._redis.ping()
                 logger.info('Redis подключён')
                 return
 
             except RedisConnectionError as exc:
                 last_error = exc
                 if attempt < self.max_retries - 1:
-                    wait = (
-                        self.retry_backoff ** attempt
-                    )
+                    wait = self.retry_backoff ** attempt
                     logger.warning(
                         'Redis попытка %d/%d не '
                         'удалась, повтор через %ds',
@@ -147,15 +139,13 @@ class RedisClient:
         await self.close()
 
 
-# --- Lazy singleton (§21.5) ---
-
 _redis_client: RedisClient | None = None
 
 
 def get_redis_client() -> RedisClient:
     """Получить или создать синглтон RedisClient.
 
-    Ленивая инициализация — settings читается
+    Ленивая инициализация означает, что settings читается
     только при первом вызове, не при импорте.
 
     Returns:
