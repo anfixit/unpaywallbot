@@ -30,7 +30,7 @@ The review combined:
 - static checks through Ruff, mypy, Bandit, and pip-audit
 - unit and integration tests through pytest
 - reproducible Docker image build
-- GitHub Actions validation on pull request `#1`
+- GitHub Actions validation on audit pull requests
 
 Live extraction against subscriber-only articles is intentionally excluded. Such tests are unstable, may require credentials, and are not appropriate for deterministic CI.
 
@@ -89,8 +89,8 @@ Primary adversarial actions considered:
 | LOG-01 | Medium | Concurrent JSONL writes could interleave | Fixed |
 | OSS-01 | Medium | Missing environment template and Docker ignore file | Fixed |
 | OSS-02 | Medium | Missing security, contribution, conduct, support, and audit policies | Fixed |
-| DEP-01 | Medium | Development dependency declarations are duplicated in `pyproject.toml` | Deferred |
-| AUTHSTORE-01 | Medium | Optional account storage needs an atomic encrypted-file format and migration design | Deferred, disabled by default |
+| DEP-01 | Medium | Development dependency declarations require cleanup | Deferred |
+| AUTHSTORE-01 | Medium | Optional account storage needed an atomic encrypted-file format and migration design | Fixed for single-process use, disabled by default |
 | INT-01 | Medium | Publication adapters have no stable live compatibility guarantee | Accepted limitation |
 | EXT-01 | Low | Archive and publisher availability are external dependencies | Accepted limitation |
 
@@ -115,31 +115,19 @@ Tests cover loopback, RFC1918 networks, IPv6 loopback, and the common `169.254.1
 
 ### NET-03: actual response-size enforcement
 
-The shared HTTP client now streams and counts decoded response bytes. It
-rejects oversized responses even when `Content-Length` is absent,
-incorrect, chunked, or smaller than the decompressed body.
+The shared HTTP client now streams and counts decoded response bytes. It rejects oversized responses even when `Content-Length` is absent, incorrect, chunked, or smaller than the decompressed body.
 
 ### HEAD-03: Playwright outbound boundaries
 
-The optional authenticated browser now validates its initial URL, routes
-browser HTTP requests through the public-URL guard, blocks cross-domain
-non-GET requests, blocks service workers, and verifies the domain after
-login. It remains disabled in the default runtime. Because Chromium owns
-the final socket resolution, deployments with hostile DNS assumptions
-should keep this optional component disabled or isolate it at the network
-layer.
+The optional authenticated browser now validates its initial URL, routes browser HTTP requests through the public-URL guard, blocks cross-domain non-GET requests, blocks service workers, and verifies the domain after login. It remains disabled in the default runtime. Because Chromium owns the final socket resolution, deployments with hostile DNS assumptions should keep this optional component disabled or isolate it at the network layer.
 
 ### PRIV-02: explicit Telegraph consent
 
-Publishing long text to Telegraph is disabled by default through
-`TELEGRAPH_ENABLED=false`. When explicitly enabled, article text and
-source URLs are HTML-escaped before submission. Documentation now states
-that the content is transferred to a third-party service.
+Publishing long text to Telegraph is disabled by default through `TELEGRAPH_ENABLED=false`. When explicitly enabled, article text and source URLs are HTML-escaped before submission. Documentation states that the content is transferred to a third-party service.
 
 ### REDIS-01: non-blocking cache statistics
 
-Cache statistics now iterate keys with Redis `SCAN` instead of the
-blocking `KEYS` command.
+Cache statistics now iterate keys with Redis `SCAN` instead of the blocking `KEYS` command.
 
 ### OPS-01: Redis exposure
 
@@ -210,29 +198,34 @@ The release workflow:
 - deploys only when `DEPLOY_ENABLED=true`
 - verifies the container healthcheck after activation
 
+### AUTHSTORE-01: encrypted account storage
+
+The optional storage now:
+
+- uses a versioned Fernet envelope
+- derives each new key with PBKDF2-HMAC-SHA256 and a random salt
+- reads legacy fixed-salt Fernet tokens for migration
+- validates every decrypted field before constructing an account
+- fails closed when the key is wrong or the file is damaged
+- writes through a mode `0600` temporary file, `fsync`, and `os.replace`
+- serializes concurrent writes inside one process
+- replaces duplicate records instead of accumulating copies
+- reads passwords through `getpass` or stdin, never command arguments
+
+The component remains disabled in the default runtime. One storage file must have one writer process. Detailed operation and migration guidance is in `docs/ACCOUNT_STORAGE.md`.
+
 ## Deferred items
 
 ### DEP-01: dependency declaration cleanup
 
-`pyproject.toml` currently contains overlapping optional and dependency-group declarations. Changing these declarations requires regenerating and reviewing `uv.lock` in a controlled environment.
+`pyproject.toml` still contains direct dependencies that may only be transitive or unused by application code. Removing them requires regenerating and reviewing `uv.lock` in a dedicated dependency pull request.
 
 Recommended follow-up:
 
-1. retain one `dependency-groups.dev` definition
-2. remove the duplicate Playwright optional group if headless remains a core dependency
-3. add project metadata and package build configuration if the project is to be distributed through PyPI
-4. run `uv lock --upgrade` only in a dedicated dependency update PR
-
-### AUTHSTORE-01: account storage format
-
-The optional encrypted account manager is not connected to the default bot runtime. Before enabling it in production:
-
-1. add atomic temporary-file replacement
-2. add an explicit file-format version
-3. store a random per-file KDF salt
-4. provide migration and key-rotation procedures
-5. add a process-level and cross-process write lock
-6. define credential retention and deletion policy
+1. prove direct imports for each production dependency
+2. remove unused declarations
+3. regenerate `uv.lock` with the pinned Python and uv versions
+4. run the full CI and Docker build before merge
 
 ## Accepted limitations
 
@@ -241,6 +234,7 @@ The optional encrypted account manager is not connected to the default bot runti
 - HTML extraction can return incomplete or noisy text when site markup changes.
 - The bot does not establish legal entitlement to content.
 - No deterministic CI can prove live compatibility with frequently changing publisher sites.
+- Optional account storage supports one writer process per file, not distributed concurrent writers.
 
 ## Release criteria
 
