@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/production-readiness-audit
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -11,6 +14,9 @@ permissions:
 
 jobs:
   apply:
+    if: >-
+      github.event_name != 'pull_request'
+      || github.head_ref == 'agent/production-readiness-audit'
     runs-on: ubuntu-latest
     steps:
       - name: Check out audit branch
