@@ -37,7 +37,7 @@ jobs:
 
       - name: Log in to GHCR
         env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_TOKEN: ${{ github.token }}
         run: >-
           printf '%s' "$GHCR_TOKEN" |
           docker login ghcr.io
@@ -56,6 +56,7 @@ jobs:
 
       - name: Push immutable and latest tags
         run: |
+          set -Eeuo pipefail
           docker push "${IMAGE_NAME}:${SOURCE_SHA}"
           docker push "${IMAGE_NAME}:latest"
 
@@ -66,7 +67,6 @@ jobs:
   deploy:
     name: Deploy production
     needs: publish
-    if: vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -80,17 +80,78 @@ jobs:
       ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
       ALLOWED_USERS: ${{ secrets.ALLOWED_USERS }}
       PUBLIC_ACCESS: ${{ secrets.PUBLIC_ACCESS }}
-      GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
-      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+      GHCR_TOKEN: ${{ github.token }}
+      GHCR_USERNAME: ${{ github.actor }}
       IMAGE_REF: ${{ needs.publish.outputs.image }}
+      REPOSITORY_URL: https://github.com/${{ github.repository }}.git
     steps:
+      - name: Validate deployment inputs
+        run: |
+          set -Eeuo pipefail
+          required=(
+            SSH_HOST
+            SSH_USER
+            SSH_PRIVATE_KEY
+            DEPLOY_PATH
+            BOT_TOKEN
+            ENCRYPTION_KEY
+            ALLOWED_USERS
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Required deployment value is missing: ${name}" >&2
+              exit 1
+            fi
+          done
+
       - name: Configure SSH
         run: |
           set -Eeuo pipefail
+          port="${SSH_PORT:-22}"
           install -m 700 -d "$HOME/.ssh"
           printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
-          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+
+          if [[ -n "${SSH_KNOWN_HOSTS:-}" ]]; then
+            printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          else
+            echo 'SSH_KNOWN_HOSTS is not set; bootstrapping the host key.'
+            ssh-keyscan -p "$port" -H "$SSH_HOST" \
+              > "$HOME/.ssh/known_hosts"
+          fi
+          chmod 600 "$HOME/.ssh/known_hosts"
+          ssh-keygen -lf "$HOME/.ssh/known_hosts"
+
+      - name: Verify server prerequisites
+        run: |
+          set -Eeuo pipefail
+          port="${SSH_PORT:-22}"
+          ssh \
+            -i "$HOME/.ssh/id_ed25519" \
+            -p "$port" \
+            -o BatchMode=yes \
+            "${SSH_USER}@${SSH_HOST}" \
+            bash -s -- "$DEPLOY_PATH" "$REPOSITORY_URL" <<'REMOTE'
+          set -Eeuo pipefail
+          deploy_path="$1"
+          repository_url="$2"
+
+          command -v git >/dev/null
+          command -v docker >/dev/null
+          docker compose version >/dev/null
+
+          if [[ ! -d "$deploy_path/.git" ]]; then
+            mkdir -p "$deploy_path"
+            git clone \
+              --branch main \
+              --single-branch \
+              "$repository_url" \
+              "$deploy_path"
+          fi
+
+          test -d "$deploy_path/.git"
+          test -w "$deploy_path"
+          REMOTE
 
       - name: Create production environment file
         run: |
@@ -153,8 +214,60 @@ jobs:
           chmod 600 .env.production
 
           BOT_IMAGE="$image_ref" docker compose pull bot
-          BOT_IMAGE="$image_ref" docker compose up -d --remove-orphans
-          BOT_IMAGE="$image_ref" docker compose ps
           BOT_IMAGE="$image_ref" \
-            docker compose exec -T bot python -m bot.healthcheck
+            docker compose up -d --remove-orphans
+
+          healthy=false
+          for _ in $(seq 1 18); do
+            if BOT_IMAGE="$image_ref" \
+              docker compose exec -T bot \
+              python -m bot.healthcheck; then
+              healthy=true
+              break
+            fi
+            sleep 5
+          done
+
+          if [[ "$healthy" != true ]]; then
+            BOT_IMAGE="$image_ref" docker compose ps
+            BOT_IMAGE="$image_ref" \
+              docker compose logs --tail=200 bot redis
+            exit 1
+          fi
+
+          BOT_IMAGE="$image_ref" docker compose ps
+          docker logout ghcr.io >/dev/null 2>&1 || true
           REMOTE
+
+  notify:
+    name: Telegram deployment notification
+    if: always()
+    needs: [publish, deploy]
+    runs-on: ubuntu-latest
+    env:
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_NOTIFICATION_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_NOTIFICATION_CHAT_ID }}
+    steps:
+      - name: Send deployment result
+        shell: bash
+        run: |
+          if [[ -z "$TELEGRAM_TOKEN" || -z "$TELEGRAM_CHAT_ID" ]]; then
+            echo 'Telegram notification secrets are not available.'
+            exit 0
+          fi
+
+          text=$(cat <<MESSAGE
+          GitHub Actions: ${{ github.repository }}
+          Workflow: ${{ github.workflow }}
+          Commit: ${SOURCE_SHA}
+          Publish: ${{ needs.publish.result }}
+          Deploy: ${{ needs.deploy.result }}
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MESSAGE
+          )
+
+          curl --fail --silent --show-error \
+            --request POST \
+            --url "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${text}"
