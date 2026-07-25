@@ -1,8 +1,6 @@
 """Privacy-aware structured access logging."""
 
 import asyncio
-import hashlib
-import hmac
 import json
 import os
 import time
@@ -21,6 +19,7 @@ from aiogram.types import (
 
 from bot.config import settings
 from bot.models.user_request import UserRequest
+from bot.utils.privacy import pseudonymize_user_id
 
 __all__ = ['AccessLogMiddleware']
 
@@ -73,8 +72,8 @@ class AccessLogMiddleware(BaseMiddleware):
                 log_entry['user_id'] = user.id
                 log_entry['username'] = user.username
             else:
-                log_entry['user_hash'] = self._user_hash(
-                    user.id,
+                log_entry['user_hash'] = (
+                    pseudonymize_user_id(user.id)
                 )
 
         if isinstance(event, Message):
@@ -109,16 +108,6 @@ class AccessLogMiddleware(BaseMiddleware):
                 2,
             )
             await self._save_log(log_entry)
-
-    @staticmethod
-    def _user_hash(user_id: int) -> str:
-        """Return a stable keyed pseudonym for a Telegram user."""
-        key = settings.encryption_key.get_secret_value()
-        return hmac.new(
-            key.encode('utf-8'),
-            str(user_id).encode('ascii'),
-            hashlib.sha256,
-        ).hexdigest()[:16]
 
     @staticmethod
     def _enrich_from_request(
