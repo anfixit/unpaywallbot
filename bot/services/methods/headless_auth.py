@@ -1,7 +1,7 @@
 """Authenticated headless browser extraction.
 
 The default bot runtime does not enable this component. It is kept
-for explicitly configured research environments with owned accounts.
+for controlled research environments with owned accounts.
 """
 
 import asyncio
@@ -14,21 +14,15 @@ from playwright.async_api import (
     WebSocketRoute,
     async_playwright,
 )
-from playwright.async_api import (
-    TimeoutError as PlaywrightTimeout,
-)
+from playwright.async_api import TimeoutError as PlaywrightTimeout
 
-from bot.auth.account_manager import (
-    Account,
-    AccountManager,
-)
+from bot.auth.account_manager import Account, AccountManager
+from bot.constants import BypassMethod
 from bot.models.article import Article
-from bot.security.url_guard import (
-    UnsafeUrlError,
-    ensure_public_url,
-)
+from bot.security.url_guard import UnsafeUrlError, ensure_public_url
 from bot.services.content_extractor import ContentExtractor
 from bot.utils.url_utils import (
+    extract_domain,
     is_same_domain,
     normalize_url,
 )
@@ -48,10 +42,7 @@ _DEFAULT_USER_AGENT = (
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
     'AppleWebKit/537.36'
 )
-
-_CONTENT_SELECTORS = (
-    'article, .article, .content, main'
-)
+_CONTENT_SELECTORS = 'article, .article, .content, main'
 
 
 async def _guard_browser_request(
@@ -70,8 +61,8 @@ async def _guard_browser_request(
         await ensure_public_url(target_url)
     except UnsafeUrlError:
         logger.warning(
-            'Playwright заблокировал URL: %s',
-            target_url,
+            'Playwright заблокировал домен: %s',
+            extract_domain(target_url),
         )
         await route.abort('blockedbyclient')
         return
@@ -81,9 +72,9 @@ async def _guard_browser_request(
         and not is_same_domain(target_url, root_url)
     ):
         logger.warning(
-            'Playwright заблокировал cross-domain %s: %s',
+            'Playwright заблокировал cross-domain %s для %s',
             request.method,
-            target_url,
+            extract_domain(target_url),
         )
         await route.abort('blockedbyclient')
         return
@@ -91,9 +82,7 @@ async def _guard_browser_request(
     await route.continue_()
 
 
-async def _block_websocket(
-    route: WebSocketRoute,
-) -> None:
+async def _block_websocket(route: WebSocketRoute) -> None:
     """Отклонить WebSocket из браузера."""
     await route.close(
         code=1008,
@@ -107,19 +96,19 @@ async def fetch_via_headless_auth(
     account_manager: AccountManager,
     extractor: ContentExtractor | None = None,
 ) -> Article | None:
-    """Extract a page with an explicitly configured account."""
+    """Извлечь страницу с явно настроенным аккаунтом."""
     norm_url = normalize_url(url)
     if not norm_url:
         return None
 
     await ensure_public_url(norm_url)
-
+    domain = extract_domain(norm_url)
     account = await account_manager.get_account_for_url(
         norm_url,
         user_id,
     )
     if not account:
-        msg = f'Нет аккаунта для {norm_url}'
+        msg = f'Нет аккаунта для домена {domain}'
         raise RuntimeError(msg)
 
     if extractor is None:
@@ -139,22 +128,15 @@ async def fetch_via_headless_auth(
                 '=AutomationControlled',
             ],
         )
-
         context = await browser.new_context(
-            viewport={
-                'width': 1280,
-                'height': 800,
-            },
+            viewport={'width': 1280, 'height': 800},
             user_agent=_DEFAULT_USER_AGENT,
             accept_downloads=False,
             service_workers='block',
         )
 
         async def guard_route(route: Route) -> None:
-            await _guard_browser_request(
-                route,
-                norm_url,
-            )
+            await _guard_browser_request(route, norm_url)
 
         await context.route('**/*', guard_route)
         await context.route_web_socket(
@@ -163,15 +145,13 @@ async def fetch_via_headless_auth(
         )
 
         if account.session_cookies:
-            # Playwright does not expose SetCookieParam at runtime.
-            # Stored cookies are validated by Playwright on insertion.
+            # Playwright validates stored cookies on insertion.
             await context.add_cookies(
                 account.session_cookies,  # type: ignore[arg-type]
             )
 
         page = await context.new_page()
         page.set_default_timeout(_BROWSER_TIMEOUT)
-
         response = await page.goto(
             norm_url,
             wait_until='networkidle',
@@ -179,32 +159,21 @@ async def fetch_via_headless_auth(
         )
 
         if not response or response.status >= 400:
-            status = (
-                response.status if response
-                else 'unknown'
-            )
-            msg = f'HTTP {status}'
-            raise RuntimeError(msg)
+            status = response.status if response else 'unknown'
+            raise RuntimeError(f'HTTP {status}')
 
         if _is_login_page(page.url):
             if not is_same_domain(page.url, norm_url):
-                msg = (
-                    'Cross-domain login redirect blocked: '
-                    f'{page.url}'
+                raise RuntimeError(
+                    'Cross-domain login redirect blocked',
                 )
-                raise RuntimeError(msg)
 
-            logger.info(
-                'Редирект на login для %s',
-                norm_url,
-            )
+            logger.info('Редирект на login для %s', domain)
             await _handle_login(page, account)
             if not is_same_domain(page.url, norm_url):
-                msg = (
-                    'Cross-domain login completion blocked: '
-                    f'{page.url}'
+                raise RuntimeError(
+                    'Cross-domain login completion blocked',
                 )
-                raise RuntimeError(msg)
 
             await page.goto(
                 norm_url,
@@ -225,14 +194,16 @@ async def fetch_via_headless_auth(
             await asyncio.sleep(_FALLBACK_WAIT)
 
         html = await page.content()
-
         cookies = await context.cookies()
         account.session_cookies = [
             dict(cookie) for cookie in cookies
         ]
         await account_manager.save_account(account)
 
-        return extractor.extract(html, norm_url)
+        article = extractor.extract(html, norm_url)
+        if article and not article.is_empty:
+            article.extraction_method = BypassMethod.HEADLESS_AUTH
+        return article
     finally:
         if page:
             await page.close()
@@ -245,7 +216,7 @@ async def fetch_via_headless_auth(
 
 
 def _is_login_page(url: str) -> bool:
-    """Check whether the current URL is a login page."""
+    """Проверить, является ли URL страницей входа."""
     lower = url.lower()
     return 'login' in lower or 'signin' in lower
 
@@ -254,7 +225,7 @@ async def _handle_login(
     page: Page,
     account: Account,
 ) -> None:
-    """Fill a same-domain login form."""
+    """Заполнить форму входа того же домена."""
     await page.wait_for_selector(
         'form, input[type="email"], '
         'input[type="password"]',
@@ -274,26 +245,19 @@ async def _handle_login(
     email_filled = False
     for selector in email_selectors:
         if await page.locator(selector).count():
-            await page.fill(
-                selector,
-                account.email,
-            )
+            await page.fill(selector, account.email)
             email_filled = True
             break
 
     password_filled = False
     for selector in password_selectors:
         if await page.locator(selector).count():
-            await page.fill(
-                selector,
-                account.password,
-            )
+            await page.fill(selector, account.password)
             password_filled = True
             break
 
     if not email_filled or not password_filled:
-        msg = 'Login form fields not found'
-        raise RuntimeError(msg)
+        raise RuntimeError('Login form fields not found')
 
     submit_selectors = [
         'button[type="submit"]',
@@ -305,8 +269,7 @@ async def _handle_login(
             await page.click(selector)
             break
     else:
-        msg = 'Login submit button not found'
-        raise RuntimeError(msg)
+        raise RuntimeError('Login submit button not found')
 
     await page.wait_for_url(
         '**/*',
