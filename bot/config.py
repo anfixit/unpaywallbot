@@ -72,6 +72,12 @@ class Settings(BaseSettings):
         default=False,
         description='Хранить raw Telegram identifiers в access log',
     )
+    telegraph_enabled: bool = Field(
+        default=False,
+        description=(
+            'Разрешить передачу длинных статей в Telegraph'
+        ),
+    )
 
     @field_validator('allowed_users', mode='before')
     @classmethod
