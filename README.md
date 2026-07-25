@@ -26,8 +26,8 @@ Authenticated browser extraction exists as an isolated experimental component, b
 - Readability, JSON-LD, and semantic HTML content extraction
 - Redis cache, FSM storage, and atomic rate limiting
 - Private-by-default production access with an explicit allowlist
-- SSRF protection for initial requests, redirects, DNS rebinding, private networks, IP literals, credentials, and non-standard ports
-- Bounded request duration, redirects, response size, processes, memory, and container logs
+- SSRF validation for initial requests and redirects, including private networks, IP literals, credentials, and non-standard ports
+- Bounded request duration, redirects, decoded response size, processes, memory, and container logs
 - Privacy-preserving access logs with pseudonymous user identifiers
 - Reproducible Docker image and hardened Docker Compose stack
 - Blocking lint, type, test, dependency, security, and Docker build checks
@@ -131,10 +131,19 @@ Redis is available only on the private Compose network. The bot container runs a
 | `LOG_LEVEL` | no | `INFO` | Application log level |
 | `REQUEST_TIMEOUT_SECONDS` | no | `90` | Overall processing timeout, from 10 to 300 seconds |
 | `LOG_USER_IDENTIFIERS` | no | `false` | Store raw Telegram identifiers in access logs |
+| `TELEGRAPH_ENABLED` | no | `false` | Publish long extracted text to the third-party Telegraph service |
 
 * Production requires either a non-empty `ALLOWED_USERS` value or `PUBLIC_ACCESS=true`.
 
 Secrets must never be committed. `.env`, `.env.local`, and `.env.production` are ignored by Git.
+
+### Third-party publishing
+
+`TELEGRAPH_ENABLED` is disabled by default. When enabled, long extracted
+text, its title, author, and source URL are sent to the third-party
+Telegraph service. Enable it only when this transfer is appropriate for
+your deployment and users. When it is disabled, long text is split into
+Telegram messages instead.
 
 ## Publication configuration
 
