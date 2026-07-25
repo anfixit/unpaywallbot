@@ -123,7 +123,41 @@ jobs:
           chmod 600 "$HOME/.ssh/known_hosts"
           ssh-keygen -lf "$HOME/.ssh/known_hosts"
 
-      - name: Verify server prerequisites
+      - name: Verify SSH access
+        run: |
+          set -Eeuo pipefail
+          port="${SSH_PORT:-22}"
+          ssh \
+            -i "$HOME/.ssh/id_ed25519" \
+            -p "$port" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            "${SSH_USER}@${SSH_HOST}" \
+            'set -eu; printf "remote-user="; id -un; id'
+
+      - name: Verify Git availability
+        run: |
+          set -Eeuo pipefail
+          port="${SSH_PORT:-22}"
+          ssh \
+            -i "$HOME/.ssh/id_ed25519" \
+            -p "$port" \
+            -o BatchMode=yes \
+            "${SSH_USER}@${SSH_HOST}" \
+            'set -eu; command -v git; git --version'
+
+      - name: Verify Docker access
+        run: |
+          set -Eeuo pipefail
+          port="${SSH_PORT:-22}"
+          ssh \
+            -i "$HOME/.ssh/id_ed25519" \
+            -p "$port" \
+            -o BatchMode=yes \
+            "${SSH_USER}@${SSH_HOST}" \
+            'set -eu; command -v docker; docker info >/dev/null; docker compose version'
+
+      - name: Prepare deployment repository
         run: |
           set -Eeuo pipefail
           port="${SSH_PORT:-22}"
@@ -137,10 +171,6 @@ jobs:
           deploy_path="$1"
           repository_url="$2"
 
-          command -v git >/dev/null
-          command -v docker >/dev/null
-          docker compose version >/dev/null
-
           if [[ ! -d "$deploy_path/.git" ]]; then
             mkdir -p "$deploy_path"
             git clone \
@@ -152,6 +182,7 @@ jobs:
 
           test -d "$deploy_path/.git"
           test -w "$deploy_path"
+          printf 'deploy-path=%s\n' "$deploy_path"
           REMOTE
 
       - name: Create production environment file
