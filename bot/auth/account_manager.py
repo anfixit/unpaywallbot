@@ -8,6 +8,8 @@ import asyncio
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from playwright.async_api import SetCookieParam
+
 from bot.auth.encryptor import encryptor
 from bot.utils.url_utils import extract_domain
 
@@ -27,7 +29,7 @@ class Account:
     password: str
     domain: str
     user_id: int
-    session_cookies: list[dict] | None = None
+    session_cookies: list[SetCookieParam] | None = None
     last_used: str | None = None
     is_active: bool = True
 

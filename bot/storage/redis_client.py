@@ -6,6 +6,8 @@
 
 import asyncio
 import logging
+from collections.abc import Awaitable
+from typing import cast
 
 from redis.asyncio import ConnectionPool, Redis
 from redis.exceptions import (
@@ -73,7 +75,11 @@ class RedisClient:
                 self._redis = Redis(
                     connection_pool=self._pool,
                 )
-                await self._redis.ping()
+                ping = cast(
+                    Awaitable[bool],
+                    self._redis.ping(),
+                )
+                await ping
                 logger.info('Redis подключён')
                 return
 

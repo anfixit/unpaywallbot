@@ -192,8 +192,17 @@ async def info_callback(
     callback: CallbackQuery,
 ) -> None:
     """Показать информацию по кнопке."""
-    text = _INFO_MAP[callback.data]
-    await callback.message.edit_text(
+    data = callback.data
+    message = callback.message
+    if data is None or not isinstance(message, Message):
+        await callback.answer(
+            'Сообщение недоступно',
+            show_alert=True,
+        )
+        return
+
+    text = _INFO_MAP[data]
+    await message.edit_text(
         text,
         parse_mode='Markdown',
         reply_markup=(
@@ -211,7 +220,15 @@ async def back_to_start(
     callback: CallbackQuery,
 ) -> None:
     """Вернуться к главному меню."""
-    await callback.message.edit_text(
+    message = callback.message
+    if not isinstance(message, Message):
+        await callback.answer(
+            'Сообщение недоступно',
+            show_alert=True,
+        )
+        return
+
+    await message.edit_text(
         _WELCOME,
         parse_mode='Markdown',
         reply_markup=(

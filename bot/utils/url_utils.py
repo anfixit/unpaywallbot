@@ -3,6 +3,7 @@
 import hashlib
 import ipaddress
 from urllib.parse import (
+    ParseResult,
     parse_qs,
     urlencode,
     urlparse,
@@ -53,7 +54,9 @@ def _has_rejected_scheme(url: str) -> bool:
     )
 
 
-def _parse_valid_url(url: object):
+def _parse_valid_url(
+    url: object,
+) -> ParseResult | None:
     """Вернуть parsed URL или None после безопасной проверки."""
     if not isinstance(url, str):
         return None

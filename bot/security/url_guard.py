@@ -8,6 +8,7 @@
 import asyncio
 import ipaddress
 import socket
+from typing import NoReturn
 from urllib.parse import urlsplit
 
 import httpx
@@ -26,7 +27,7 @@ class UnsafeUrlError(httpx.RequestError):
 def _raise_unsafe(
     message: str,
     request: httpx.Request | None,
-) -> None:
+) -> NoReturn:
     raise UnsafeUrlError(message, request=request)
 
 

@@ -132,7 +132,7 @@ async def _submit_and_wait(
                 '',
             )
             if location:
-                return location
+                return str(location)
     except httpx.HTTPError:
         logger.debug(
             'archive.ph submit не удался для %s',

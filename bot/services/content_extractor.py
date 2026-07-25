@@ -673,13 +673,14 @@ class ContentExtractor:
 
         # Убираем мусорные абзацы: кнопки
         # шаринга, подписи к фото, даты
-        cleaned = [
-            p
-            for p in paragraphs
-            if not _JUNK_LINE_RE.match(p) and not _JUNK_FRAGMENT_RE.match(p)
+        cleaned_paragraphs = [
+            paragraph
+            for paragraph in paragraphs
+            if not _JUNK_LINE_RE.match(paragraph)
+            and not _JUNK_FRAGMENT_RE.match(paragraph)
         ]
 
-        return "\n\n".join(cleaned)
+        return "\n\n".join(cleaned_paragraphs)
 
     @staticmethod
     def _strip_tags(html: str) -> str:

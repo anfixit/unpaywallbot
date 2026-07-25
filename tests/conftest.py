@@ -14,11 +14,10 @@ field_validator в Settings.parse_allowed_users
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
-import pytest
 from aiogram.types import Chat, Message, User
+import pytest
 
 from bot.models.article import Article
-
 
 # --- Telegram mocks ---
 

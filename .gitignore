@@ -9,7 +9,6 @@ dist/
 # Virtual environments and local tooling
 .venv/
 venv/
-.python-version
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/

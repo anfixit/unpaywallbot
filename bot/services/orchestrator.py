@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 
 # Множество для хранения ссылок на фоновые задачи.
 # Предотвращает сборку GC до завершения (§17.5).
-_background_tasks: set[asyncio.Task] = set()
+_background_tasks: set[asyncio.Task[bool]] = set()
 
 
 class Orchestrator:

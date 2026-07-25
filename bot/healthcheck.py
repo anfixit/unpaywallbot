@@ -2,6 +2,8 @@
 
 import asyncio
 import sys
+from collections.abc import Awaitable
+from typing import cast
 
 from redis.asyncio import Redis
 
@@ -17,7 +19,8 @@ async def check() -> bool:
         socket_timeout=2,
     )
     try:
-        return bool(await client.ping())
+        ping = cast(Awaitable[bool], client.ping())
+        return bool(await ping)
     finally:
         await client.aclose()
 
