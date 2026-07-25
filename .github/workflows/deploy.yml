@@ -155,7 +155,35 @@ jobs:
             -p "$port" \
             -o BatchMode=yes \
             "${SSH_USER}@${SSH_HOST}" \
-            'set -eu; command -v docker; docker info >/dev/null; docker compose version'
+            bash <<'REMOTE'
+          set -Eeuo pipefail
+          command -v docker
+
+          if docker info >/dev/null 2>&1; then
+            docker_cmd=(docker)
+            echo 'docker-access=direct'
+          elif sudo -n docker info >/dev/null 2>&1; then
+            docker_cmd=(sudo -n docker)
+            echo 'docker-access=passwordless-sudo'
+          else
+            echo 'Docker exists but the deployment user cannot access the daemon.' >&2
+            id >&2
+            ls -l /var/run/docker.sock >&2 || true
+            getent group docker >&2 || true
+            docker info >&2 || true
+            sudo -n docker info >&2 || true
+            exit 1
+          fi
+
+          if "${docker_cmd[@]}" compose version >/dev/null 2>&1; then
+            "${docker_cmd[@]}" compose version
+          elif command -v docker-compose >/dev/null 2>&1; then
+            docker-compose version
+          else
+            echo 'Docker Compose is not installed.' >&2
+            exit 1
+          fi
+          REMOTE
 
       - name: Prepare deployment repository
         run: |
@@ -216,12 +244,13 @@ jobs:
         run: |
           set -Eeuo pipefail
           port="${SSH_PORT:-22}"
+          remote_login="if docker info >/dev/null 2>&1; then docker login ghcr.io --username '${GHCR_USERNAME}' --password-stdin; elif sudo -n docker info >/dev/null 2>&1; then sudo -n docker login ghcr.io --username '${GHCR_USERNAME}' --password-stdin; else exit 1; fi"
           printf '%s' "$GHCR_TOKEN" | ssh \
             -i "$HOME/.ssh/id_ed25519" \
             -p "$port" \
             -o BatchMode=yes \
             "${SSH_USER}@${SSH_HOST}" \
-            "docker login ghcr.io --username '${GHCR_USERNAME}' --password-stdin"
+            "$remote_login"
 
       - name: Activate release
         run: |
@@ -237,6 +266,24 @@ jobs:
           deploy_path="$1"
           image_ref="$2"
 
+          if docker info >/dev/null 2>&1; then
+            docker_cmd=(docker)
+          elif sudo -n docker info >/dev/null 2>&1; then
+            docker_cmd=(sudo -n docker)
+          else
+            echo 'Docker daemon access was lost.' >&2
+            exit 1
+          fi
+
+          if "${docker_cmd[@]}" compose version >/dev/null 2>&1; then
+            compose_cmd=("${docker_cmd[@]}" compose)
+          elif command -v docker-compose >/dev/null 2>&1; then
+            compose_cmd=(docker-compose)
+          else
+            echo 'Docker Compose is not installed.' >&2
+            exit 1
+          fi
+
           cd "$deploy_path"
           git fetch --prune origin main
           git checkout main
@@ -245,14 +292,14 @@ jobs:
           mv .env.production.next .env.production
           chmod 600 .env.production
 
-          BOT_IMAGE="$image_ref" docker compose pull bot
+          BOT_IMAGE="$image_ref" "${compose_cmd[@]}" pull bot
           BOT_IMAGE="$image_ref" \
-            docker compose up -d --remove-orphans
+            "${compose_cmd[@]}" up -d --remove-orphans
 
           healthy=false
           for _ in $(seq 1 18); do
             if BOT_IMAGE="$image_ref" \
-              docker compose exec -T bot \
+              "${compose_cmd[@]}" exec -T bot \
               python -m bot.healthcheck; then
               healthy=true
               break
@@ -261,14 +308,14 @@ jobs:
           done
 
           if [[ "$healthy" != true ]]; then
-            BOT_IMAGE="$image_ref" docker compose ps
+            BOT_IMAGE="$image_ref" "${compose_cmd[@]}" ps
             BOT_IMAGE="$image_ref" \
-              docker compose logs --tail=200 bot redis
+              "${compose_cmd[@]}" logs --tail=200 bot redis
             exit 1
           fi
 
-          BOT_IMAGE="$image_ref" docker compose ps
-          docker logout ghcr.io >/dev/null 2>&1 || true
+          BOT_IMAGE="$image_ref" "${compose_cmd[@]}" ps
+          "${docker_cmd[@]}" logout ghcr.io >/dev/null 2>&1 || true
           REMOTE
 
   notify:
