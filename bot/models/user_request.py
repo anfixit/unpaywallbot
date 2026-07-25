@@ -1,66 +1,32 @@
-"""Модель данных запроса пользователя.
-
-Используется для аудита, статистики и обнаружения
-аномалий (раздел middleware/access_log.py).
-"""
+"""Модель данных запроса пользователя."""
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from bot.models.article import Article
 from bot.models.paywall_info import PaywallInfo
+from bot.utils.privacy import pseudonymize_user_id
+from bot.utils.url_utils import extract_domain
 
 __all__ = ['UserRequest']
 
 
 @dataclass
 class UserRequest:
-    """Запрос пользователя к боту.
+    """Запрос пользователя к боту."""
 
-    Создаётся при получении URL от пользователя
-    и заполняется по мере обработки. Используется
-    для логирования и анализа.
-    """
-
-    # --- Данные пользователя ---
     user_id: int
-    """Telegram user ID."""
-
-    username: str | None = None
-    """Telegram username (если есть)."""
-
-    # --- Данные запроса ---
     original_url: str = ''
-    """URL, который отправил пользователь (сырой)."""
-
     normalized_url: str = ''
-    """Нормализованный URL."""
-
-    # --- Временные метки ---
     received_at: datetime = field(
         default_factory=lambda: datetime.now(UTC),
     )
-    """Время получения запроса (UTC)."""
-
     processed_at: datetime | None = None
-    """Время завершения обработки."""
-
-    # --- Результаты обработки ---
     paywall_info: PaywallInfo | None = None
-    """Результат классификации paywall."""
-
     article: Article | None = None
-    """Извлечённая статья (если успешно)."""
-
-    # --- Статус и ошибки ---
     success: bool = False
-    """Успешно ли извлечена статья."""
-
     error_message: str | None = None
-    """Сообщение об ошибке (если была)."""
-
     error_type: str | None = None
-    """Тип ошибки ('Timeout', 'AuthRequired')."""
 
     @property
     def processing_time_ms(self) -> float | None:
@@ -80,12 +46,7 @@ class UserRequest:
         article: Article | None = None,
         error: Exception | None = None,
     ) -> None:
-        """Завершить запрос (результат и время).
-
-        Args:
-            article: Извлечённая статья (если есть).
-            error: Исключение, если произошло.
-        """
+        """Завершить запрос результатом или ошибкой."""
         self.processed_at = datetime.now(UTC)
 
         if article:
@@ -97,62 +58,49 @@ class UserRequest:
             self.error_type = error.__class__.__name__
 
     def to_log_dict(self) -> dict[str, object]:
-        """Подготовить словарь для JSON-логирования.
-
-        Используется в access_log.py для
-        структурированных логов.
-        """
+        """Вернуть безопасные операционные метаданные."""
+        url = self.normalized_url or self.original_url
         base: dict[str, object] = {
-            'user_id': self.user_id,
-            'username': self.username,
-            'url': (
-                self.normalized_url
-                or self.original_url
-            ),
-            'received_at': (
-                self.received_at.isoformat()
-            ),
+            'user_hash': pseudonymize_user_id(self.user_id),
+            'domain': extract_domain(url),
+            'received_at': self.received_at.isoformat(),
             'processed_at': (
                 self.processed_at.isoformat()
                 if self.processed_at else None
             ),
-            'processing_time_ms': (
-                self.processing_time_ms
-            ),
+            'processing_time_ms': self.processing_time_ms,
             'success': self.success,
-            'error': self.error_message,
+            'error_type': self.error_type,
         }
 
         if self.paywall_info:
-            pi = self.paywall_info
+            info = self.paywall_info
             base['paywall'] = {
-                'domain': pi.domain,
-                'type': str(pi.paywall_type),
+                'domain': info.domain,
+                'type': str(info.paywall_type),
                 'method': (
-                    str(pi.suggested_method)
-                    if pi.suggested_method
+                    str(info.suggested_method)
+                    if info.suggested_method
                     else None
                 ),
-                'platform': pi.platform,
+                'platform': info.platform,
             }
 
-        if self.article and self.article.title:
+        if self.article:
             base['article'] = {
-                'title': self.article.title,
-                'author': self.article.author,
-                'content_length': (
-                    len(self.article.content)
-                ),
+                'content_length': len(self.article.content),
+                'method': self.article.extraction_method,
             }
 
         return base
 
     def __str__(self) -> str:
-        """Краткое представление для логов."""
-        status = '✓' if self.success else '✗'
+        """Краткое privacy-safe представление."""
+        status = 'success' if self.success else 'failure'
+        url = self.normalized_url or self.original_url
         return (
-            f'UserRequest('
-            f'user={self.user_id}, '
-            f'url={self.original_url}, '
+            'UserRequest('
+            f'user={pseudonymize_user_id(self.user_id)}, '
+            f'domain={extract_domain(url)}, '
             f'status={status})'
         )
