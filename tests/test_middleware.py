@@ -157,7 +157,7 @@ async def test_access_log(
     mock_handler,
     tmp_path,
 ) -> None:
-    """Логирование запросов."""
+    """Логирование запросов без raw identifiers."""
     middleware = AccessLogMiddleware(
         log_dir=tmp_path,
     )
@@ -180,6 +180,8 @@ async def test_access_log(
         encoding='utf-8',
     )
     log_entry = json.loads(content.strip())
-    assert log_entry['user_id'] == 123
+    assert 'user_hash' in log_entry
+    assert 'user_id' not in log_entry
+    assert 'username' not in log_entry
     assert log_entry['status'] == 'success'
     assert 'duration_ms' in log_entry
