@@ -5,11 +5,11 @@ import secrets
 
 import httpx
 
-from bot.constants import MAX_RETRY_COUNT
+from bot.constants import BypassMethod, MAX_RETRY_COUNT
 from bot.models.article import Article
 from bot.services.content_extractor import ContentExtractor
 from bot.services.http_client import create_safe_http_client
-from bot.utils.url_utils import normalize_url
+from bot.utils.url_utils import extract_domain, normalize_url
 
 __all__ = ['fetch_via_googlebot_spoof']
 
@@ -84,13 +84,16 @@ async def fetch_via_googlebot_spoof(
                         norm_url,
                     )
                     if article and not article.is_empty:
+                        article.extraction_method = (
+                            BypassMethod.GOOGLEBOT_SPOOF
+                        )
                         return article
 
             if response.status_code in (403, 429):
                 logger.debug(
                     'Crawler fetch %s: %d '
                     '(попытка %d/%d)',
-                    norm_url,
+                    extract_domain(norm_url),
                     response.status_code,
                     attempt + 1,
                     MAX_RETRY_COUNT,
