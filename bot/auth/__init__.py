@@ -5,12 +5,17 @@
 - AccountManager — управление аккаунтами
 """
 
-from bot.auth.account_manager import Account, AccountManager
+from bot.auth.account_manager import (
+    Account,
+    AccountManager,
+    AccountStorageError,
+)
 from bot.auth.encryptor import Encryptor, encryptor
 
 __all__ = [
     'Account',
     'AccountManager',
+    'AccountStorageError',
     'Encryptor',
     'encryptor',
 ]
