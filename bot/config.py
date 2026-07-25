@@ -68,6 +68,10 @@ class Settings(BaseSettings):
         ge=10,
         le=300,
     )
+    log_user_identifiers: bool = Field(
+        default=False,
+        description='Хранить raw Telegram identifiers в access log',
+    )
 
     @field_validator('allowed_users', mode='before')
     @classmethod
