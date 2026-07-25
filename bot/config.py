@@ -1,25 +1,21 @@
-"""Конфигурация приложения из env-переменных.
-
-Использует pydantic-settings (раздел 3.3 стандарта).
-SecretStr не попадает в логи при print().
-
-Приоритет загрузки:
-  .env.local → .env.production → .env
-"""
+"""Конфигурация приложения из переменных окружения."""
 
 from pathlib import Path
+from typing import Literal, Self
 
-from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import (
-    BaseSettings,
-    SettingsConfigDict,
+from pydantic import (
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
 )
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = ['settings']
 
 
 def _find_env_file() -> str | None:
-    """Найти первый существующий .env файл."""
+    """Найти первый существующий локальный env-файл."""
     for name in (
         '.env.local',
         '.env.production',
@@ -31,75 +27,99 @@ def _find_env_file() -> str | None:
 
 
 class Settings(BaseSettings):
-    """Конфигурация приложения.
-
-    Обязательные поля (без default) вызовут
-    ValidationError при отсутствии в env.
-    """
+    """Проверенная конфигурация runtime."""
 
     model_config = SettingsConfigDict(
         env_file=_find_env_file(),
         env_file_encoding='utf-8',
         case_sensitive=False,
+        extra='ignore',
     )
 
-    # Telegram
     bot_token: SecretStr = Field(
-        description=(
-            'Токен Telegram-бота от BotFather'
-        ),
+        description='Токен Telegram-бота',
     )
-
-    # Redis
     redis_url: str = Field(
         default='redis://localhost:6379/0',
-        description='URL подключения к Redis',
+        description='URL Redis',
     )
-
-    # Безопасность
     encryption_key: SecretStr = Field(
-        min_length=16,
-        description='Ключ шифрования сессий',
+        min_length=32,
+        description='Секрет шифрования',
     )
+
     allowed_users: list[int] = Field(
-        default=[],
-        description=(
-            'Whitelist Telegram user_id. '
-            'Пустой список = доступ всем.'
-        ),
+        default_factory=list,
+        description='Разрешённые Telegram user_id',
+    )
+    public_access: bool = Field(
+        default=False,
+        description='Разрешить доступ всем пользователям',
     )
 
-    # Логирование
     log_level: str = Field(default='INFO')
-
-    # Окружение
-    env: str = Field(default='development')
+    env: Literal[
+        'development',
+        'testing',
+        'production',
+    ] = Field(default='development')
+    request_timeout_seconds: int = Field(
+        default=90,
+        ge=10,
+        le=300,
+    )
+    log_user_identifiers: bool = Field(
+        default=False,
+        description='Хранить raw Telegram identifiers в access log',
+    )
 
     @field_validator('allowed_users', mode='before')
     @classmethod
     def parse_allowed_users(
         cls,
         value: object,
-    ) -> list[int]:
-        """Обработать пустую строку как пустой список.
+    ) -> object:
+        """Обработать пустую строку как пустой список."""
+        if isinstance(value, str) and not value.strip():
+            return []
+        return value
 
-        CI/CD может передать ALLOWED_USERS="" — без
-        этого валидатора pydantic-settings вызовет
-        json.loads("") → JSONDecodeError.
-        """
-        if isinstance(value, str):
-            stripped = value.strip()
-            if not stripped:
-                return []
-        return value  # type: ignore[return-value]
+    @field_validator('log_level')
+    @classmethod
+    def normalize_log_level(cls, value: str) -> str:
+        """Нормализовать и проверить уровень логирования."""
+        normalized = value.upper()
+        allowed = {
+            'CRITICAL',
+            'ERROR',
+            'WARNING',
+            'INFO',
+            'DEBUG',
+        }
+        if normalized not in allowed:
+            msg = f'Недопустимый LOG_LEVEL: {value}'
+            raise ValueError(msg)
+        return normalized
+
+    @model_validator(mode='after')
+    def validate_production_access(self) -> Self:
+        """Не запускать production случайно открытым."""
+        if (
+            self.env == 'production'
+            and not self.public_access
+            and not self.allowed_users
+        ):
+            msg = (
+                'Production требует ALLOWED_USERS '
+                'или PUBLIC_ACCESS=true'
+            )
+            raise ValueError(msg)
+        return self
 
     @property
     def is_production(self) -> bool:
-        """Продакшн-окружение."""
+        """Признак production-окружения."""
         return self.env == 'production'
 
 
-# Синглтон — создаётся один раз при импорте.
-# Если обязательные поля не заданы, Pydantic
-# выбросит ValidationError с понятным traceback.
 settings = Settings()

@@ -1,11 +1,10 @@
-"""Middleware для логирования действий пользователей.
-
-Сохраняет структурированные логи в JSON-формате
-для последующего анализа и обнаружения аномалий.
-"""
+"""Privacy-aware structured access logging."""
 
 import asyncio
+import hashlib
+import hmac
 import json
+import os
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -20,31 +19,35 @@ from aiogram.types import (
     TelegramObject,
 )
 
+from bot.config import settings
 from bot.models.user_request import UserRequest
 
 __all__ = ['AccessLogMiddleware']
 
 
 class AccessLogMiddleware(BaseMiddleware):
-    """Логирует действия пользователей в JSON-файл."""
+    """Write JSONL logs without raw user identifiers by default."""
 
     def __init__(
         self,
         log_dir: Path = Path('data/logs'),
     ) -> None:
-        """Инициализировать middleware.
-
-        Args:
-            log_dir: Директория для хранения логов.
-        """
+        """Initialize log storage."""
         self.log_dir = log_dir
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-
-        today = datetime.now(UTC).strftime('%Y-%m-%d')
-        self.current_date = today
-        self.log_file = (
-            self.log_dir / f'access_{today}.jsonl'
+        self.log_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+            mode=0o700,
         )
+        self.log_dir.chmod(0o700)
+
+        self.current_date = (
+            datetime.now(UTC).strftime('%Y-%m-%d')
+        )
+        self.log_file = self._path_for_date(
+            self.current_date,
+        )
+        self._write_lock = asyncio.Lock()
         super().__init__()
 
     async def __call__(
@@ -56,37 +59,31 @@ class AccessLogMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        """Обработать событие с логированием."""
-        start_time = time.time()
-        request_id = str(uuid4())[:8]
-
+        """Process an update and persist an audit record."""
+        start_time = time.monotonic()
         log_entry: dict[str, Any] = {
-            'timestamp': (
-                datetime.now(UTC).isoformat()
-            ),
-            'request_id': request_id,
-            'event_type': (
-                event.__class__.__name__
-            ),
+            'timestamp': datetime.now(UTC).isoformat(),
+            'request_id': str(uuid4())[:8],
+            'event_type': event.__class__.__name__,
         }
 
-        if isinstance(
-            event, (Message, CallbackQuery),
-        ):
-            user = event.from_user
-            log_entry.update({
-                'user_id': user.id,
-                'username': user.username,
-            })
+        user = getattr(event, 'from_user', None)
+        if user is not None:
+            if settings.log_user_identifiers:
+                log_entry['user_id'] = user.id
+                log_entry['username'] = user.username
+            else:
+                log_entry['user_hash'] = self._user_hash(
+                    user.id,
+                )
 
         if isinstance(event, Message):
             log_entry.update({
                 'message_id': event.message_id,
-                'chat_id': event.chat.id,
-                'has_url': (
-                    'http' in (event.text or '')
-                ),
+                'has_url': 'http' in (event.text or ''),
             })
+            if settings.log_user_identifiers:
+                log_entry['chat_id'] = event.chat.id
 
         if isinstance(event, CallbackQuery):
             log_entry.update({
@@ -99,89 +96,99 @@ class AccessLogMiddleware(BaseMiddleware):
 
         try:
             result = await handler(event, data)
-
-            log_entry['status'] = 'success'
-            log_entry['duration_ms'] = round(
-                (time.time() - start_time) * 1000, 2,
-            )
-
-            self._enrich_from_request(
-                log_entry, data,
-            )
-            return result
-
         except Exception:
             log_entry['status'] = 'error'
-            log_entry['duration_ms'] = round(
-                (time.time() - start_time) * 1000, 2,
-            )
             raise
-
+        else:
+            log_entry['status'] = 'success'
+            self._enrich_from_request(log_entry, data)
+            return result
         finally:
+            log_entry['duration_ms'] = round(
+                (time.monotonic() - start_time) * 1000,
+                2,
+            )
             await self._save_log(log_entry)
+
+    @staticmethod
+    def _user_hash(user_id: int) -> str:
+        """Return a stable keyed pseudonym for a Telegram user."""
+        key = settings.encryption_key.get_secret_value()
+        return hmac.new(
+            key.encode('utf-8'),
+            str(user_id).encode('ascii'),
+            hashlib.sha256,
+        ).hexdigest()[:16]
 
     @staticmethod
     def _enrich_from_request(
         log_entry: dict[str, Any],
         data: dict[str, Any],
     ) -> None:
-        """Добавить данные из UserRequest."""
-        req = data.get('request')
-        if not isinstance(req, UserRequest):
+        """Add non-sensitive processing metadata."""
+        request = data.get('request')
+        if not isinstance(request, UserRequest):
             return
 
-        if req.paywall_info:
-            pi = req.paywall_info
+        if request.paywall_info:
+            info = request.paywall_info
             log_entry['paywall'] = {
-                'domain': pi.domain,
-                'type': str(pi.paywall_type),
+                'domain': info.domain,
+                'type': str(info.paywall_type),
                 'method': (
-                    str(pi.suggested_method)
-                    if pi.suggested_method
+                    str(info.suggested_method)
+                    if info.suggested_method
                     else None
                 ),
             }
 
-        if req.article:
+        if request.article:
             log_entry['article'] = {
-                'title': req.article.title,
-                'content_length': (
-                    len(req.article.content)
+                'content_length': len(
+                    request.article.content,
                 ),
             }
+
+    def _path_for_date(self, date: str) -> Path:
+        """Build a daily JSONL path."""
+        return self.log_dir / f'access_{date}.jsonl'
 
     async def _save_log(
         self,
         entry: dict[str, Any],
     ) -> None:
-        """Сохранить запись в лог-файл."""
-        today = (
-            datetime.now(UTC).strftime('%Y-%m-%d')
-        )
-        if today != self.current_date:
-            self.current_date = today
-            self.log_file = (
-                self.log_dir
-                / f'access_{today}.jsonl'
-            )
+        """Serialize writes to prevent interleaved JSON lines."""
+        async with self._write_lock:
+            today = datetime.now(UTC).strftime('%Y-%m-%d')
+            if today != self.current_date:
+                self.current_date = today
+                self.log_file = self._path_for_date(today)
 
-        await asyncio.to_thread(
-            self._write_sync, entry,
-        )
+            await asyncio.to_thread(
+                self._write_sync,
+                entry,
+            )
 
     def _write_sync(
         self,
         entry: dict[str, Any],
     ) -> None:
-        """Синхронная запись в файл."""
-        with open(
+        """Append one record with mode 0600."""
+        descriptor = os.open(
             self.log_file,
+            os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+            0o600,
+        )
+        with os.fdopen(
+            descriptor,
             'a',
             encoding='utf-8',
-        ) as f:
-            f.write(
+        ) as file:
+            file.write(
                 json.dumps(
-                    entry, ensure_ascii=False,
+                    entry,
+                    ensure_ascii=False,
                 )
-                + '\n'
+                + '\n',
             )
+        self.log_file.chmod(0o600)

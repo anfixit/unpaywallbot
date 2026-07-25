@@ -1,8 +1,4 @@
-"""Константы приложения.
-
-Все магические числа и строки определены здесь.
-Категории значений — через StrEnum (раздел 4.3).
-"""
+"""Константы приложения."""
 
 from enum import StrEnum
 from typing import Final
@@ -14,7 +10,9 @@ __all__ = [
     'CACHE_TTL_SHORT',
     'DEFAULT_TIMEOUT_SECONDS',
     'FREEMIUM_MARKERS',
+    'MAX_HTTP_RESPONSE_BYTES',
     'MAX_MESSAGE_LENGTH',
+    'MAX_REDIRECTS',
     'MAX_RETRY_COUNT',
     'MAX_URL_LENGTH',
     'PBKDF2_ITERATIONS',
@@ -25,8 +23,6 @@ __all__ = [
     'VALID_URL_SCHEMES',
 ]
 
-
-# --- Paywall types (StrEnum вместо строк) ---
 
 class PaywallType(StrEnum):
     """Тип paywall целевого издания."""
@@ -39,7 +35,7 @@ class PaywallType(StrEnum):
 
 
 class BypassMethod(StrEnum):
-    """Метод обхода paywall."""
+    """Метод получения содержимого страницы."""
 
     JS_DISABLE = 'js_disable'
     GOOGLEBOT_SPOOF = 'googlebot_spoof'
@@ -48,7 +44,6 @@ class BypassMethod(StrEnum):
     WSJ_BYPASS = 'wsj_bypass'
 
 
-# --- Freemium-маркеры в URL/DOM ---
 FREEMIUM_MARKERS: Final = frozenset({
     'F+',
     'S+',
@@ -58,14 +53,11 @@ FREEMIUM_MARKERS: Final = frozenset({
     'reduced=true',
 })
 
-# --- URL validation ---
 MAX_URL_LENGTH: Final = 2048
-VALID_URL_SCHEMES: Final = frozenset({
-    'http', 'https',
-})
+VALID_URL_SCHEMES: Final = frozenset({'http', 'https'})
 
-# --- URL cleaning ---
 TRACKING_PARAMS: Final = frozenset({
+    '_ga',
     'fbclid',
     'gclid',
     'mc_cid',
@@ -76,26 +68,22 @@ TRACKING_PARAMS: Final = frozenset({
     'utm_source',
     'utm_term',
     'yclid',
-    '_ga',
 })
 
-# --- Шифрование (PBKDF2 + Fernet) ---
 PBKDF2_SALT: Final = b'unpaywall_salt_2026'
 PBKDF2_ITERATIONS: Final = 100_000
 
-# --- HTTP ---
 DEFAULT_TIMEOUT_SECONDS: Final = 30
 MAX_RETRY_COUNT: Final = 3
 RETRY_BACKOFF_FACTOR: Final = 2
+MAX_REDIRECTS: Final = 5
+MAX_HTTP_RESPONSE_BYTES: Final = 5 * 1024 * 1024
 
-# --- Cache (в секундах) ---
-CACHE_TTL_SHORT: Final = 300       # 5 минут
-CACHE_TTL_LONG: Final = 86_400     # 24 часа
+CACHE_TTL_SHORT: Final = 300
+CACHE_TTL_LONG: Final = 86_400
 
-# --- Telegram ---
 MAX_MESSAGE_LENGTH: Final = 4096
 
-# --- Загрузка файлов ---
 ALLOWED_IMAGE_TYPES: Final = frozenset({
     'image/jpeg',
     'image/png',

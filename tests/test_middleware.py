@@ -1,4 +1,4 @@
-"""Тесты для middleware."""
+"""Тесты middleware."""
 
 import json
 from unittest.mock import AsyncMock, Mock, patch
@@ -6,15 +6,9 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from aiogram.types import Chat, Message, User
 
-from bot.middleware.access_log import (
-    AccessLogMiddleware,
-)
-from bot.middleware.rate_limiter import (
-    RateLimiterMiddleware,
-)
-from bot.middleware.whitelist import (
-    WhitelistMiddleware,
-)
+from bot.middleware.access_log import AccessLogMiddleware
+from bot.middleware.rate_limiter import RateLimiterMiddleware
+from bot.middleware.whitelist import WhitelistMiddleware
 
 
 @pytest.fixture
@@ -46,35 +40,23 @@ async def test_rate_limiter_allowed(
     """Пользователь не превысил лимиты."""
     middleware = RateLimiterMiddleware()
 
-    mock_redis = Mock()
-    mock_redis.client = AsyncMock()
-    mock_redis.client.get = AsyncMock(
-        return_value='5',
-    )
-
-    # Pipeline-методы вызываются синхронно
-    # в Redis pipeline-контексте, поэтому
-    # используем Mock (не AsyncMock), чтобы
-    # не генерировать неожиданные корутины.
-    mock_pipe = Mock()
-    mock_pipe.incr = Mock()
-    mock_pipe.expire = Mock()
-    mock_pipe.execute = AsyncMock()
-    mock_redis.client.pipeline = Mock(
-        return_value=mock_pipe,
-    )
+    mock_client = Mock()
+    mock_client.eval = AsyncMock(return_value=0)
+    mock_redis = Mock(client=mock_client)
 
     with patch(
-        'bot.middleware.rate_limiter'
-        '.get_redis_client',
+        'bot.middleware.rate_limiter.get_redis_client',
         return_value=mock_redis,
     ):
         result = await middleware(
-            mock_handler, mock_message, {},
+            mock_handler,
+            mock_message,
+            {},
         )
 
     assert result == 'ok'
     mock_handler.assert_called_once()
+    mock_client.eval.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -82,24 +64,23 @@ async def test_rate_limiter_blocked(
     mock_message,
     mock_handler,
 ) -> None:
-    """Пользователь превысил лимит в минуту."""
+    """Пользователь превысил минутный лимит."""
     middleware = RateLimiterMiddleware(
         rate_per_minute=5,
     )
 
-    mock_redis = Mock()
-    mock_redis.client = AsyncMock()
-    mock_redis.client.get = AsyncMock(
-        return_value='10',
-    )
+    mock_client = Mock()
+    mock_client.eval = AsyncMock(return_value=1)
+    mock_redis = Mock(client=mock_client)
 
     with patch(
-        'bot.middleware.rate_limiter'
-        '.get_redis_client',
+        'bot.middleware.rate_limiter.get_redis_client',
         return_value=mock_redis,
     ):
         result = await middleware(
-            mock_handler, mock_message, {},
+            mock_handler,
+            mock_message,
+            {},
         )
 
     assert result is None
@@ -113,10 +94,15 @@ async def test_whitelist_allowed(
     mock_handler,
 ) -> None:
     """Пользователь в белом списке."""
-    middleware = WhitelistMiddleware(whitelist=[123])
+    middleware = WhitelistMiddleware(
+        whitelist=[123],
+        public_access=False,
+    )
 
     result = await middleware(
-        mock_handler, mock_message, {},
+        mock_handler,
+        mock_message,
+        {},
     )
 
     assert result == 'ok'
@@ -129,10 +115,15 @@ async def test_whitelist_blocked(
     mock_handler,
 ) -> None:
     """Пользователь не в белом списке."""
-    middleware = WhitelistMiddleware(whitelist=[456])
+    middleware = WhitelistMiddleware(
+        whitelist=[456],
+        public_access=False,
+    )
 
     result = await middleware(
-        mock_handler, mock_message, {},
+        mock_handler,
+        mock_message,
+        {},
     )
 
     assert result is None
@@ -141,18 +132,40 @@ async def test_whitelist_blocked(
 
 
 @pytest.mark.asyncio
+async def test_public_access(
+    mock_message,
+    mock_handler,
+) -> None:
+    """Явный public mode пропускает пользователя."""
+    middleware = WhitelistMiddleware(
+        whitelist=[],
+        public_access=True,
+    )
+
+    result = await middleware(
+        mock_handler,
+        mock_message,
+        {},
+    )
+
+    assert result == 'ok'
+
+
+@pytest.mark.asyncio
 async def test_access_log(
     mock_message,
     mock_handler,
     tmp_path,
 ) -> None:
-    """Логирование запросов."""
+    """Логирование запросов без raw identifiers."""
     middleware = AccessLogMiddleware(
         log_dir=tmp_path,
     )
 
     result = await middleware(
-        mock_handler, mock_message, {},
+        mock_handler,
+        mock_message,
+        {},
     )
 
     assert result == 'ok'
@@ -167,6 +180,8 @@ async def test_access_log(
         encoding='utf-8',
     )
     log_entry = json.loads(content.strip())
-    assert log_entry['user_id'] == 123
+    assert 'user_hash' in log_entry
+    assert 'user_id' not in log_entry
+    assert 'username' not in log_entry
     assert log_entry['status'] == 'success'
     assert 'duration_ms' in log_entry

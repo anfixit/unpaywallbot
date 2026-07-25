@@ -1,27 +1,34 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
-# Без .pyc в контейнере, без буферизации stdout
+ARG UV_VERSION=0.11.32
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/app/.venv \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    PATH="/app/.venv/bin:${PATH}"
 
-# Не запускаем от root (§13.2)
-RUN useradd -m appuser
+COPY --from=ghcr.io/astral-sh/uv:${UV_VERSION} \
+    /uv /uvx /usr/local/bin/
+
+RUN groupadd --gid 10001 appuser \
+    && useradd --create-home --uid 10001 \
+        --gid appuser appuser
+
 WORKDIR /app
 
-# Установка uv
-COPY --from=ghcr.io/astral-sh/uv:latest \
-    /uv /usr/local/bin/uv
-
-# Зависимости отдельным слоем (кэш Docker)
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
+RUN uv sync --locked --no-dev --no-install-project \
+    && python -m playwright install --with-deps chromium \
+    && chmod -R a+rX /ms-playwright
 
-# Playwright (chromium для headless-методов)
-RUN uv run playwright install --with-deps chromium
-
-# Копируем код
 COPY --chown=appuser:appuser . .
+RUN uv sync --locked --no-dev \
+    && mkdir -p /app/data/logs \
+    && chown -R appuser:appuser /app/data
 
 USER appuser
 
-CMD ["uv", "run", "python", "-m", "bot.main"]
+CMD ["python", "-m", "bot.main"]

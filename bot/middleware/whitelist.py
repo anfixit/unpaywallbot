@@ -1,7 +1,4 @@
-"""Middleware для ограничения доступа по белому списку.
-
-Полезно для тестирования и защиты бота от посторонних.
-"""
+"""Middleware контроля доступа к Telegram-боту."""
 
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -19,20 +16,25 @@ __all__ = ['WhitelistMiddleware']
 
 
 class WhitelistMiddleware(BaseMiddleware):
-    """Пропускает только пользователей из whitelist."""
+    """Разрешить public mode или пользователей из allowlist."""
 
     def __init__(
         self,
         whitelist: list[int] | None = None,
+        *,
+        public_access: bool | None = None,
     ) -> None:
-        """Инициализировать middleware.
-
-        Args:
-            whitelist: Разрешённые user_id.
-                Если None — из settings.allowed_users.
-        """
-        self.whitelist = (
-            whitelist or settings.allowed_users
+        """Инициализировать политику доступа."""
+        values = (
+            settings.allowed_users
+            if whitelist is None
+            else whitelist
+        )
+        self.whitelist = frozenset(values)
+        self.public_access = (
+            settings.public_access
+            if public_access is None
+            else public_access
         )
         super().__init__()
 
@@ -45,31 +47,31 @@ class WhitelistMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        """Проверить пользователя по whitelist."""
-        if not self.whitelist:
+        """Проверить доступ пользователя."""
+        if self.public_access:
             return await handler(event, data)
 
-        user_id = None
-        if isinstance(
-            event, (Message, CallbackQuery),
-        ):
-            user_id = event.from_user.id
+        user = getattr(event, 'from_user', None)
+        user_id = user.id if user else None
 
-        if not user_id:
+        if user_id is not None and user_id in self.whitelist:
             return await handler(event, data)
 
-        if user_id in self.whitelist:
+        if not settings.is_production and not self.whitelist:
             return await handler(event, data)
 
+        await self._deny(event)
+        return None
+
+    @staticmethod
+    async def _deny(event: TelegramObject) -> None:
+        """Отправить безопасный отказ в доступе."""
         if isinstance(event, Message):
             await event.answer(
-                '🔒 Бот в режиме тестирования.\n'
-                'Доступ только для разработчиков.',
+                '🔒 Доступ к боту ограничен.',
             )
         elif isinstance(event, CallbackQuery):
             await event.answer(
                 'Доступ ограничен',
                 show_alert=True,
             )
-
-        return None

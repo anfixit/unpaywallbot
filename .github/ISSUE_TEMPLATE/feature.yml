@@ -1,0 +1,58 @@
+name: Feature request
+description: Propose a focused, responsible improvement
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Requests for unauthorized access, credential sharing, CAPTCHA, DRM, or server-side authorization bypass are out of scope.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or maintainer problem should be solved?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and privacy impact
+      description: Cover URLs, redirects, credentials, logs, secrets, containers, and deployment when relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tests
+    attributes:
+      label: Test strategy
+      description: Explain how the change can be tested deterministically without private or subscriber-only data.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Responsible scope
+      options:
+        - label: The request does not require credentials or unauthorized access.
+          required: true
+        - label: The request does not weaken SSRF or production access controls.
+          required: true
+        - label: I searched existing issues and pull requests.
+          required: true
