@@ -13,6 +13,7 @@ from aiogram.types import (
 from redis.exceptions import RedisError
 
 from bot.storage.redis_client import get_redis_client
+from bot.utils.privacy import pseudonymize_user_id
 
 __all__ = ['RateLimiterMiddleware']
 
@@ -71,12 +72,13 @@ class RateLimiterMiddleware(BaseMiddleware):
         if user is None:
             return await handler(event, data)
 
+        user_hash = pseudonymize_user_id(user.id)
         try:
             blocked_window = await self._consume(user.id)
         except (RedisError, RuntimeError):
             logger.exception(
-                'Rate limiter unavailable for user_id=%d',
-                user.id,
+                'Rate limiter unavailable for user=%s',
+                user_hash,
             )
             await self._reply(
                 event,
@@ -91,8 +93,8 @@ class RateLimiterMiddleware(BaseMiddleware):
                 3: 'Достигнут дневной лимит. Возвращайся завтра.',
             }[blocked_window]
             logger.info(
-                'Rate limit user_id=%d window=%d',
-                user.id,
+                'Rate limit user=%s window=%d',
+                user_hash,
                 blocked_window,
             )
             await self._reply(event, message)
