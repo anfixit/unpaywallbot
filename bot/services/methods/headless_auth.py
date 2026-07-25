@@ -1,8 +1,7 @@
-"""Метод обхода hard paywall через headless-браузер.
+"""Authenticated headless browser extraction.
 
-Принцип: для hard paywall контента нет в DOM без
-валидной сессии. Используем Playwright для запуска
-браузера, логина и извлечения контента.
+The default bot runtime does not enable this component. It is kept
+for explicitly configured research environments with owned accounts.
 """
 
 import asyncio
@@ -10,6 +9,7 @@ import logging
 
 from playwright.async_api import (
     Page,
+    Playwright,
     async_playwright,
 )
 from playwright.async_api import (
@@ -21,10 +21,11 @@ from bot.auth.account_manager import (
     AccountManager,
 )
 from bot.models.article import Article
-from bot.services.content_extractor import (
-    ContentExtractor,
+from bot.services.content_extractor import ContentExtractor
+from bot.utils.url_utils import (
+    is_same_domain,
+    normalize_url,
 )
-from bot.utils.url_utils import normalize_url
 
 __all__ = ['fetch_via_headless_auth']
 
@@ -53,28 +54,14 @@ async def fetch_via_headless_auth(
     account_manager: AccountManager,
     extractor: ContentExtractor | None = None,
 ) -> Article | None:
-    """Извлечь статью через headless-браузер.
-
-    Args:
-        url: URL статьи.
-        user_id: ID пользователя Telegram.
-        account_manager: Менеджер аккаунтов.
-        extractor: Экстрактор контента.
-
-    Returns:
-        Article или None.
-
-    Raises:
-        RuntimeError: Нет аккаунта или браузера.
-    """
+    """Extract a page with an explicitly configured account."""
     norm_url = normalize_url(url)
     if not norm_url:
         return None
 
-    account = (
-        await account_manager.get_account_for_url(
-            norm_url, user_id,
-        )
+    account = await account_manager.get_account_for_url(
+        norm_url,
+        user_id,
     )
     if not account:
         msg = f'Нет аккаунта для {norm_url}'
@@ -83,13 +70,14 @@ async def fetch_via_headless_auth(
     if extractor is None:
         extractor = ContentExtractor()
 
+    playwright: Playwright | None = None
     browser = None
     context = None
     page = None
 
     try:
-        pw = await async_playwright().start()
-        browser = await pw.chromium.launch(
+        playwright = await async_playwright().start()
+        browser = await playwright.chromium.launch(
             headless=True,
             args=[
                 '--disable-blink-features'
@@ -127,16 +115,23 @@ async def fetch_via_headless_auth(
             msg = f'HTTP {status}'
             raise RuntimeError(msg)
 
-        # Проверяем, не выкинуло ли на логин
         if _is_login_page(page.url):
+            if not is_same_domain(page.url, norm_url):
+                msg = (
+                    'Cross-domain login redirect blocked: '
+                    f'{page.url}'
+                )
+                raise RuntimeError(msg)
+
             logger.info(
-                'Редирект на логин для %s',
+                'Редирект на login для %s',
                 norm_url,
             )
             await _handle_login(page, account)
             await page.goto(
                 norm_url,
                 wait_until='networkidle',
+                timeout=_NAVIGATION_TIMEOUT,
             )
 
         try:
@@ -146,22 +141,17 @@ async def fetch_via_headless_auth(
             )
         except PlaywrightTimeout:
             logger.debug(
-                'Контент-селектор не найден '
-                'за %dms, ждём fallback',
+                'Контент-селектор не найден за %dms',
                 _CONTENT_WAIT_TIMEOUT,
             )
             await asyncio.sleep(_FALLBACK_WAIT)
 
         html = await page.content()
 
-        # Обновляем cookies для следующего раза
-        account.session_cookies = (
-            await context.cookies()
-        )
+        account.session_cookies = await context.cookies()
         await account_manager.save_account(account)
 
         return extractor.extract(html, norm_url)
-
     finally:
         if page:
             await page.close()
@@ -169,10 +159,12 @@ async def fetch_via_headless_auth(
             await context.close()
         if browser:
             await browser.close()
+        if playwright:
+            await playwright.stop()
 
 
 def _is_login_page(url: str) -> bool:
-    """Проверить, является ли URL логин-страницей."""
+    """Check whether the current URL is a login page."""
     lower = url.lower()
     return 'login' in lower or 'signin' in lower
 
@@ -181,12 +173,7 @@ async def _handle_login(
     page: Page,
     account: Account,
 ) -> None:
-    """Обработать логин на странице.
-
-    Args:
-        page: Страница браузера.
-        account: Аккаунт с email/password.
-    """
+    """Fill a same-domain login form."""
     await page.wait_for_selector(
         'form, input[type="email"], '
         'input[type="password"]',
@@ -198,24 +185,34 @@ async def _handle_login(
         'input[name="email"]',
         'input[name="login"]',
     ]
-    pass_selectors = [
+    password_selectors = [
         'input[type="password"]',
         'input[name="password"]',
     ]
 
+    email_filled = False
     for selector in email_selectors:
         if await page.locator(selector).count():
             await page.fill(
-                selector, account.email,
+                selector,
+                account.email,
             )
+            email_filled = True
             break
 
-    for selector in pass_selectors:
+    password_filled = False
+    for selector in password_selectors:
         if await page.locator(selector).count():
             await page.fill(
-                selector, account.password,
+                selector,
+                account.password,
             )
+            password_filled = True
             break
+
+    if not email_filled or not password_filled:
+        msg = 'Login form fields not found'
+        raise RuntimeError(msg)
 
     submit_selectors = [
         'button[type="submit"]',
@@ -226,6 +223,9 @@ async def _handle_login(
         if await page.locator(selector).count():
             await page.click(selector)
             break
+    else:
+        msg = 'Login submit button not found'
+        raise RuntimeError(msg)
 
     await page.wait_for_url(
         '**/*',
