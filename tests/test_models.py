@@ -1,6 +1,6 @@
 """Тесты для моделей данных."""
 
-from bot.constants import PaywallType
+from bot.constants import BypassMethod, PaywallType
 from bot.models.article import Article
 from bot.models.paywall_info import PaywallInfo
 from bot.models.user_request import UserRequest
@@ -20,10 +20,13 @@ def test_article_with_content() -> None:
         url='https://test.com',
         content=content,
         title='Test Title',
+        extraction_method=BypassMethod.JS_DISABLE,
     )
     assert article.is_empty is False
     assert article.title == 'Test Title'
     assert len(article.content) == 5000
+    assert 'https://test.com' not in str(article)
+    assert 'Test Title' not in str(article)
 
 
 def test_paywall_info_unknown() -> None:
@@ -42,22 +45,27 @@ def test_user_request_complete_success() -> None:
     """Успешное завершение запроса."""
     request = UserRequest(
         user_id=123,
-        username='testuser',
-        original_url='https://test.com',
+        original_url='https://test.com/private-path?token=secret',
     )
-
     article = Article(
-        url='https://test.com',
+        url='https://test.com/private-path',
         content='Test content',
         title='Test',
+        extraction_method=BypassMethod.JS_DISABLE,
     )
 
     request.complete(article=article)
+    log_data = request.to_log_dict()
 
     assert request.success is True
     assert request.processed_at is not None
     assert request.processing_time_ms is not None
     assert request.article == article
+    assert log_data['domain'] == 'test.com'
+    assert 'user_id' not in log_data
+    assert 'url' not in log_data
+    assert 'username' not in log_data
+    assert 'private-path' not in str(request)
 
 
 def test_user_request_complete_error() -> None:

@@ -42,17 +42,14 @@ async def test_cmd_help(mock_message) -> None:
 async def test_handle_message_with_url(
     mock_message,
 ) -> None:
-    """Сообщение с URL — без requires_auth."""
+    """Сообщение с URL без requires_auth."""
     mock_message.text = 'https://test.com/article'
     mock_state = AsyncMock()
-    mock_state.get_data = AsyncMock(
-        return_value={},
-    )
+    mock_state.get_data = AsyncMock(return_value={})
 
     mock_orch = AsyncMock()
-    mock_orch.classifier.classify = AsyncMock()
-    mock_orch.classifier.classify.return_value = (
-        Mock(requires_auth=False)
+    mock_orch.classifier.classify = AsyncMock(
+        return_value=Mock(requires_auth=False),
     )
 
     with (
@@ -61,26 +58,28 @@ async def test_handle_message_with_url(
             return_value=True,
         ),
         patch(
-            'bot.handlers.url_handler'
-            '.normalize_url',
-            return_value=(
-                'https://test.com/article'
-            ),
+            'bot.handlers.url_handler.normalize_url',
+            return_value='https://test.com/article',
         ),
         patch(
-            'bot.handlers.url_handler'
-            '._get_orchestrator',
+            'bot.handlers.url_handler._get_orchestrator',
             return_value=mock_orch,
         ),
         patch(
-            'bot.handlers.url_handler'
-            '.process_url_message',
+            'bot.handlers.url_handler.process_url_message',
         ) as mock_process,
     ):
         await url_handler.handle_message(
-            mock_message, mock_state,
+            mock_message,
+            mock_state,
         )
-        mock_process.assert_called_once()
+
+    mock_process.assert_awaited_once_with(
+        message=mock_message,
+        url='https://test.com/article',
+        user_id=123,
+        state=mock_state,
+    )
 
 
 @pytest.mark.asyncio
@@ -92,13 +91,12 @@ async def test_handle_message_no_url(
     mock_state = AsyncMock()
 
     await url_handler.handle_message(
-        mock_message, mock_state,
+        mock_message,
+        mock_state,
     )
 
     mock_message.answer.assert_called_once()
-    call_text = str(
-        mock_message.answer.call_args,
-    )
+    call_text = str(mock_message.answer.call_args)
     assert 'ссылк' in call_text.lower()
 
 
@@ -106,7 +104,7 @@ async def test_handle_message_no_url(
 async def test_try_anyway_callback(
     mock_message,
 ) -> None:
-    """Callback 'попробовать всё равно'."""
+    """Callback попробует публичные способы."""
     callback = Mock()
     callback.message = mock_message
     callback.from_user = Mock()
@@ -121,14 +119,21 @@ async def test_try_anyway_callback(
     )
 
     with patch(
-        'bot.handlers.callbacks'
-        '.process_url_message',
+        'bot.handlers.callbacks.process_url_message',
+        new=AsyncMock(),
     ) as mock_process:
         await callbacks.try_anyway(
-            callback, mock_state,
+            callback,
+            mock_state,
         )
-        mock_process.assert_called_once()
-        callback.answer.assert_called_once()
+
+    mock_process.assert_awaited_once_with(
+        message=mock_message,
+        url='https://test.com',
+        user_id=123,
+        state=mock_state,
+    )
+    callback.answer.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -177,8 +182,12 @@ async def test_process_url_keeps_telegraph_disabled(
             message=mock_message,
             url='https://example.com/article',
             user_id=123,
-            username='testuser',
             state=mock_state,
         )
 
+    orchestrator.process_url.assert_awaited_once_with(
+        url='https://example.com/article',
+        user_id=123,
+        skip_cache=False,
+    )
     get_publisher.assert_not_called()

@@ -45,17 +45,15 @@ def orchestrator(
 
 
 def _patch_cache():
-    """Патч для кеша — get и save."""
+    """Патч чтения и записи кеша."""
     return (
         patch(
-            'bot.services.orchestrator'
-            '.get_cached_article',
+            'bot.services.orchestrator.get_cached_article',
             new_callable=AsyncMock,
             return_value=None,
         ),
         patch(
-            'bot.services.orchestrator'
-            '.save_article_to_cache',
+            'bot.services.orchestrator.save_article_to_cache',
             new_callable=AsyncMock,
             return_value=True,
         ),
@@ -67,14 +65,10 @@ def _patch_unknown_chain(
     googlebot_result=None,
     archive_result=None,
 ):
-    """Патч для всей цепочки _handle_unknown.
-
-    js_disable → googlebot_spoof → archive.
-    """
+    """Патч цепочки публичных методов."""
     return (
         patch(
-            'bot.services.orchestrator'
-            '.fetch_via_js_disable',
+            'bot.services.orchestrator.fetch_via_js_disable',
             new_callable=AsyncMock,
             return_value=js_result,
         ),
@@ -85,8 +79,7 @@ def _patch_unknown_chain(
             return_value=googlebot_result,
         ),
         patch(
-            'bot.services.orchestrator'
-            '.fetch_via_archive',
+            'bot.services.orchestrator.fetch_via_archive',
             new_callable=AsyncMock,
             return_value=archive_result,
         ),
@@ -98,17 +91,22 @@ async def test_process_url_cache_hit(
     orchestrator,
     mock_classifier,
 ) -> None:
-    """Если статья в кеше — возвращаем её."""
+    """Кешированный ответ не записывается повторно."""
     cached_article = Article(
         url='https://test.com',
         content='Cached content',
+        extraction_method=BypassMethod.JS_DISABLE,
     )
 
-    with patch(
-        'bot.services.orchestrator'
-        '.get_cached_article',
-        new_callable=AsyncMock,
-        return_value=cached_article,
+    with (
+        patch(
+            'bot.services.orchestrator.get_cached_article',
+            new=AsyncMock(return_value=cached_article),
+        ),
+        patch(
+            'bot.services.orchestrator.save_article_to_cache',
+            new=AsyncMock(),
+        ) as save_cache,
     ):
         result = await orchestrator.process_url(
             'https://test.com',
@@ -117,38 +115,50 @@ async def test_process_url_cache_hit(
     assert result.success is True
     assert result.article == cached_article
     mock_classifier.classify.assert_not_called()
+    save_cache.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_process_url_unknown_paywall(
+async def test_process_url_unknown_uses_actual_archive_method(
     orchestrator,
     mock_classifier,
 ) -> None:
-    """Неизвестный paywall — цепочка до archive."""
+    """Архивный fallback не помечается как js_disable."""
     mock_classifier.classify.return_value = (
         PaywallInfo.unknown('https://test.com')
     )
-
-    p_get, p_save = _patch_cache()
-    p_js, p_google, p_archive = _patch_unknown_chain(
-        js_result=None,
-        googlebot_result=None,
-        archive_result=Article(
-            url='https://test.com',
-            content='Archived content',
-        ),
+    archived = Article(
+        url='https://test.com',
+        content='Archived content',
+        extraction_method=BypassMethod.ARCHIVE_RELAY,
+    )
+    patch_get, patch_save = _patch_cache()
+    patch_js, patch_google, patch_archive = (
+        _patch_unknown_chain(
+            js_result=None,
+            googlebot_result=None,
+            archive_result=archived,
+        )
     )
 
     with (
-        p_get, p_save,
-        p_js, p_google, p_archive as mock_archive,
+        patch_get,
+        patch_save as save_cache,
+        patch_js,
+        patch_google,
+        patch_archive as archive_fetch,
     ):
         result = await orchestrator.process_url(
             'https://test.com',
         )
 
     assert result.success is True
-    mock_archive.assert_called_once()
+    assert result.article is archived
+    assert result.article.extraction_method == (
+        BypassMethod.ARCHIVE_RELAY
+    )
+    archive_fetch.assert_awaited_once()
+    save_cache.assert_awaited_once_with(archived)
 
 
 @pytest.mark.asyncio
@@ -156,36 +166,33 @@ async def test_process_url_with_platform(
     orchestrator,
     mock_classifier,
 ) -> None:
-    """Если есть платформа — делегируем ей."""
+    """Платформенный результат сохраняется до возврата."""
     paywall_info = PaywallInfo(
         url='https://spiegel.de/plus',
         domain='spiegel.de',
         paywall_type=PaywallType.FREEMIUM,
         platform='german_freemium',
     )
-    mock_classifier.classify.return_value = (
-        paywall_info
-    )
-
-    mock_platform = AsyncMock()
-    mock_platform.handle.return_value = Article(
+    mock_classifier.classify.return_value = paywall_info
+    platform_article = Article(
         url='https://spiegel.de/plus',
         content='Platform content',
+        extraction_method=BypassMethod.JS_DISABLE,
     )
-    orchestrator.platforms['german_freemium'] = (
-        mock_platform
-    )
+    mock_platform = AsyncMock()
+    mock_platform.handle.return_value = platform_article
+    orchestrator.platforms['german_freemium'] = mock_platform
+    patch_get, patch_save = _patch_cache()
 
-    p_get, p_save = _patch_cache()
-
-    with p_get, p_save:
+    with patch_get, patch_save as save_cache:
         result = await orchestrator.process_url(
             'https://spiegel.de/plus',
             user_id=123,
         )
 
     assert result.success is True
-    mock_platform.handle.assert_called_once()
+    mock_platform.handle.assert_awaited_once()
+    save_cache.assert_awaited_once_with(platform_article)
 
 
 @pytest.mark.asyncio
@@ -193,74 +200,81 @@ async def test_process_url_with_method(
     orchestrator,
     mock_classifier,
 ) -> None:
-    """Если нет платформы, но есть метод."""
+    """Выбранный метод сохраняется как фактический."""
     paywall_info = PaywallInfo(
         url='https://nytimes.com/article',
         domain='nytimes.com',
         paywall_type=PaywallType.METERED,
-        suggested_method=(
-            BypassMethod.GOOGLEBOT_SPOOF
-        ),
+        suggested_method=BypassMethod.GOOGLEBOT_SPOOF,
     )
-    mock_classifier.classify.return_value = (
-        paywall_info
+    mock_classifier.classify.return_value = paywall_info
+    article = Article(
+        url='https://nytimes.com/article',
+        content='Article content',
+        extraction_method=BypassMethod.GOOGLEBOT_SPOOF,
     )
-
-    p_get, p_save = _patch_cache()
+    patch_get, patch_save = _patch_cache()
 
     with (
-        p_get,
-        p_save,
+        patch_get,
+        patch_save,
         patch(
             'bot.services.orchestrator'
             '.fetch_via_googlebot_spoof',
-            new_callable=AsyncMock,
-            return_value=Article(
-                url='https://nytimes.com/article',
-                content='Article content',
-            ),
-        ) as mock_method,
+            new=AsyncMock(return_value=article),
+        ) as method_fetch,
     ):
         result = await orchestrator.process_url(
             'https://nytimes.com/article',
         )
 
     assert result.success is True
-    mock_method.assert_called_once()
+    assert result.article is article
+    assert result.article.extraction_method == (
+        BypassMethod.GOOGLEBOT_SPOOF
+    )
+    method_fetch.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_process_url_fallback(
+async def test_primary_failure_preserves_archive_fallback_method(
     orchestrator,
     mock_classifier,
 ) -> None:
-    """Если основной метод не сработал — fallback."""
+    """Fallback method replaces the proposed primary method."""
     paywall_info = PaywallInfo(
-        url='https://failing-site.com',
+        url='https://failing-site.com/article',
         domain='failing-site.com',
-        paywall_type=PaywallType.UNKNOWN,
+        paywall_type=PaywallType.METERED,
+        suggested_method=BypassMethod.GOOGLEBOT_SPOOF,
     )
-    mock_classifier.classify.return_value = (
-        paywall_info
+    mock_classifier.classify.return_value = paywall_info
+    archived = Article(
+        url=paywall_info.url,
+        content='Fallback content',
+        extraction_method=BypassMethod.ARCHIVE_RELAY,
     )
-
-    p_get, p_save = _patch_cache()
-    p_js, p_google, p_archive = _patch_unknown_chain(
-        js_result=None,
-        googlebot_result=None,
-        archive_result=Article(
-            url='https://failing-site.com',
-            content='Fallback content',
-        ),
-    )
+    patch_get, patch_save = _patch_cache()
 
     with (
-        p_get, p_save,
-        p_js, p_google, p_archive as mock_archive,
+        patch_get,
+        patch_save,
+        patch(
+            'bot.services.orchestrator'
+            '.fetch_via_googlebot_spoof',
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            'bot.services.orchestrator.fetch_via_archive',
+            new=AsyncMock(return_value=archived),
+        ),
     ):
         result = await orchestrator.process_url(
-            'https://failing-site.com',
+            paywall_info.url,
         )
 
     assert result.success is True
-    mock_archive.assert_called_once()
+    assert result.article is archived
+    assert result.article.extraction_method == (
+        BypassMethod.ARCHIVE_RELAY
+    )

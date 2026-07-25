@@ -45,7 +45,6 @@ async def try_anyway(
         message=message,
         url=url,
         user_id=callback.from_user.id,
-        username=callback.from_user.username,
         state=state,
     )
 

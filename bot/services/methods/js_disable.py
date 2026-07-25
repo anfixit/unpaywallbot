@@ -4,10 +4,11 @@ import logging
 
 import httpx
 
+from bot.constants import BypassMethod
 from bot.models.article import Article
 from bot.services.content_extractor import ContentExtractor
 from bot.services.http_client import create_safe_http_client
-from bot.utils.url_utils import normalize_url
+from bot.utils.url_utils import extract_domain, normalize_url
 
 __all__ = ['fetch_via_js_disable']
 
@@ -52,7 +53,7 @@ async def fetch_via_js_disable(
             logger.debug(
                 'js_disable: HTTP %d для %s',
                 response.status_code,
-                url,
+                extract_domain(norm_url),
             )
             return None
 
@@ -63,10 +64,13 @@ async def fetch_via_js_disable(
         if 'text/html' not in content_type:
             return None
 
-        return extractor.extract(
+        article = extractor.extract(
             response.text,
             norm_url,
         )
+        if article and not article.is_empty:
+            article.extraction_method = BypassMethod.JS_DISABLE
+        return article
     finally:
         if close_client:
             await client.aclose()

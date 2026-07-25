@@ -5,10 +5,11 @@ import re
 
 import httpx
 
+from bot.constants import BypassMethod
 from bot.models.article import Article
 from bot.services.content_extractor import ContentExtractor
 from bot.services.http_client import create_safe_http_client
-from bot.utils.url_utils import normalize_url
+from bot.utils.url_utils import extract_domain, normalize_url
 
 __all__ = ['fetch_via_wsj']
 
@@ -39,12 +40,8 @@ _WSJ_HEADERS_GOOGLE: dict[str, str] = {
     'Accept-Language': 'en-US,en;q=0.9',
 }
 
-_WSJ_ARTICLE_RE = re.compile(
-    r'wsj\.com/articles/(.+)',
-)
-_WSJ_PATH_RE = re.compile(
-    r'wsj\.com(/[^?#]+)',
-)
+_WSJ_ARTICLE_RE = re.compile(r'wsj\.com/articles/(.+)')
+_WSJ_PATH_RE = re.compile(r'wsj\.com(/[^?#]+)')
 
 
 def _build_rsswn_url(url: str) -> str:
@@ -60,10 +57,7 @@ def _build_amp_url(url: str) -> str | None:
     match = _WSJ_ARTICLE_RE.search(url)
     if match:
         slug = match.group(1).split('?')[0]
-        return (
-            'https://www.wsj.com'
-            f'/amp/articles/{slug}'
-        )
+        return f'https://www.wsj.com/amp/articles/{slug}'
 
     match = _WSJ_PATH_RE.search(url)
     if match:
@@ -86,39 +80,40 @@ async def fetch_via_wsj(
     if not norm_url:
         return None
 
-    article = await _try_fetch(
-        _build_rsswn_url(norm_url),
-        headers=_WSJ_HEADERS_FACEBOOK,
-        extractor=extractor,
-        client=client,
-        label='facebook+rsswn',
-    )
-    if article:
-        return article
-
-    article = await _try_fetch(
-        _build_rsswn_url(norm_url),
-        headers=_WSJ_HEADERS_GOOGLE,
-        extractor=extractor,
-        client=client,
-        label='googlebot+rsswn',
-    )
-    if article:
-        return article
-
+    attempts = [
+        (
+            _build_rsswn_url(norm_url),
+            _WSJ_HEADERS_FACEBOOK,
+            'facebook+rsswn',
+        ),
+        (
+            _build_rsswn_url(norm_url),
+            _WSJ_HEADERS_GOOGLE,
+            'googlebot+rsswn',
+        ),
+    ]
     amp_url = _build_amp_url(norm_url)
     if amp_url:
+        attempts.append(
+            (amp_url, _WSJ_HEADERS_FACEBOOK, 'amp'),
+        )
+
+    for attempt_url, headers, label in attempts:
         article = await _try_fetch(
-            amp_url,
-            headers=_WSJ_HEADERS_FACEBOOK,
+            attempt_url,
+            headers=headers,
             extractor=extractor,
             client=client,
-            label='amp',
+            label=label,
         )
         if article:
+            article.extraction_method = BypassMethod.WSJ_BYPASS
             return article
 
-    logger.info('Все WSJ-методы не сработали: %s', url)
+    logger.info(
+        'Все WSJ-методы не сработали: %s',
+        extract_domain(norm_url),
+    )
     return None
 
 
@@ -145,7 +140,7 @@ async def _try_fetch(
                 'WSJ %s: HTTP %d для %s',
                 label,
                 response.status_code,
-                url,
+                extract_domain(url),
             )
             return None
 
@@ -167,13 +162,12 @@ async def _try_fetch(
                 len(article.content),
             )
             return article
-
         return None
     except httpx.HTTPError:
         logger.debug(
             'WSJ %s: ошибка для %s',
             label,
-            url,
+            extract_domain(url),
             exc_info=True,
         )
         return None
