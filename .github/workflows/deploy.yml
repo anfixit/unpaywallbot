@@ -1,235 +1,159 @@
-# .github/workflows/deploy.yml
-name: CI/CD
+name: Build and deploy
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
-# Разрешения для push образа в GHCR
 permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+  SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+  UV_VERSION: "0.11.32"
+
 jobs:
-  # ──────────────────────────────────────────────
-  # 1. Матричные проверки качества (параллельно)
-  # ──────────────────────────────────────────────
-  lint:
-    name: Lint (ruff)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - uses: astral-sh/setup-uv@v4
-
-      - name: Install dependencies
-        run: uv sync --all-extras
-
-      - name: Ruff check
-        run: uv run ruff check bot/
-
-  typecheck:
-    name: Types (mypy)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - uses: astral-sh/setup-uv@v4
-
-      - name: Install dependencies
-        run: uv sync --all-extras
-
-      - name: Install type stubs
-        run: uv pip install types-PyYAML --system
-
-      - name: mypy strict
-        run: uv run mypy bot/ --ignore-missing-imports
-        continue-on-error: true
-
-  test:
-    name: Tests (pytest)
-    runs-on: ubuntu-latest
-
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 5
-
-    env:
-      BOT_TOKEN: "123456789:AABBCCDDEEFFaabbccddeeff-1234567890"
-      ENCRYPTION_KEY: "test-encryption-key-32-chars!!"
-      REDIS_URL: "redis://localhost:6379/0"
-      ALLOWED_USERS: "[]"
-      ENV: "testing"
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - uses: astral-sh/setup-uv@v4
-
-      - name: Install dependencies
-        run: uv sync --all-extras
-
-      - name: Install Playwright
-        run: uv run playwright install --with-deps chromium
-
-      - name: Run tests
-        run: uv run pytest --tb=short -q
-
-  security:
-    name: Security (pip-audit)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - uses: astral-sh/setup-uv@v4
-
-      - name: Install dependencies
-        run: uv sync --all-extras
-
-      - name: Install pip-audit
-        run: uv pip install pip-audit --system
-
-      - name: Audit dependencies for CVE
-        run: pip-audit
-        continue-on-error: true
-
-  # ──────────────────────────────────────────────
-  # 2. Сборка и push Docker-образа в GHCR
-  # ──────────────────────────────────────────────
-  docker:
-    name: Push Docker image
-    needs: [lint, test]
-    runs-on: ubuntu-latest
+  publish:
+    name: Publish image
     if: >-
-      github.event_name == 'push'
-      && github.ref == 'refs/heads/main'
-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image.outputs.ref }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out validated revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.SOURCE_SHA }}
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          printf '%s' "$GHCR_TOKEN" |
+          docker login ghcr.io
+          --username "${GITHUB_ACTOR}"
+          --password-stdin
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
+      - name: Build image
+        run: |
+          set -Eeuo pipefail
+          docker build \
+            --build-arg UV_VERSION="${UV_VERSION}" \
+            --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
+            --tag "${IMAGE_NAME}:${SOURCE_SHA}" \
+            --tag "${IMAGE_NAME}:latest" \
+            .
 
-  # ──────────────────────────────────────────────
-  # 3. Деплой на сервер
-  # ──────────────────────────────────────────────
+      - name: Push immutable and latest tags
+        run: |
+          docker push "${IMAGE_NAME}:${SOURCE_SHA}"
+          docker push "${IMAGE_NAME}:latest"
+
+      - name: Export image reference
+        id: image
+        run: echo "ref=${IMAGE_NAME}:${SOURCE_SHA}" >> "$GITHUB_OUTPUT"
+
   deploy:
-    name: Deploy
-    needs: docker
+    name: Deploy production
+    needs: publish
+    if: vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: production
-
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+      ALLOWED_USERS: ${{ secrets.ALLOWED_USERS }}
+      PUBLIC_ACCESS: ${{ secrets.PUBLIC_ACCESS }}
+      GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+      IMAGE_REF: ${{ needs.publish.outputs.image }}
     steps:
-      - name: Deploy to server
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            set -e
+      - name: Configure SSH
+        run: |
+          set -Eeuo pipefail
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
 
-            echo "🚀 Переходим в директорию проекта"
-            cd ${{ secrets.DEPLOY_PATH }}
+      - name: Create production environment file
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          {
+            printf 'BOT_TOKEN=%s\n' "$BOT_TOKEN"
+            printf 'ENCRYPTION_KEY=%s\n' "$ENCRYPTION_KEY"
+            printf 'REDIS_URL=redis://redis:6379/0\n'
+            printf 'ALLOWED_USERS=%s\n' "$ALLOWED_USERS"
+            printf 'PUBLIC_ACCESS=%s\n' "${PUBLIC_ACCESS:-false}"
+            printf 'LOG_LEVEL=INFO\n'
+            printf 'ENV=production\n'
+            printf 'REQUEST_TIMEOUT_SECONDS=90\n'
+          } > "$RUNNER_TEMP/.env.production"
 
-            echo "📦 Получаем последние изменения"
-            git pull origin main
+      - name: Upload environment file
+        run: |
+          set -Eeuo pipefail
+          port="${SSH_PORT:-22}"
+          scp \
+            -i "$HOME/.ssh/id_ed25519" \
+            -P "$port" \
+            -o BatchMode=yes \
+            "$RUNNER_TEMP/.env.production" \
+            "${SSH_USER}@${SSH_HOST}:${DEPLOY_PATH}/.env.production.next"
 
-            echo "🔧 Создаем .env.production"
-            cat > .env.production << 'ENVEOF'
-            BOT_TOKEN=${{ secrets.BOT_TOKEN }}
-            ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
-            REDIS_URL=redis://localhost:6379/0
-            ALLOWED_USERS=${{ secrets.ALLOWED_USERS }}
-            LOG_LEVEL=INFO
-            ENV=production
-            ENVEOF
+      - name: Authenticate server to GHCR
+        run: |
+          set -Eeuo pipefail
+          port="${SSH_PORT:-22}"
+          printf '%s' "$GHCR_TOKEN" | ssh \
+            -i "$HOME/.ssh/id_ed25519" \
+            -p "$port" \
+            -o BatchMode=yes \
+            "${SSH_USER}@${SSH_HOST}" \
+            "docker login ghcr.io --username '${GHCR_USERNAME}' --password-stdin"
 
-            chmod 600 .env.production
+      - name: Activate release
+        run: |
+          set -Eeuo pipefail
+          port="${SSH_PORT:-22}"
+          ssh \
+            -i "$HOME/.ssh/id_ed25519" \
+            -p "$port" \
+            -o BatchMode=yes \
+            "${SSH_USER}@${SSH_HOST}" \
+            bash -s -- "$DEPLOY_PATH" "$IMAGE_REF" <<'REMOTE'
+          set -Eeuo pipefail
+          deploy_path="$1"
+          image_ref="$2"
 
-            echo "🔄 Перезапускаем контейнеры"
-            docker-compose down
-            docker-compose up -d --build
+          cd "$deploy_path"
+          git fetch --prune origin main
+          git checkout main
+          git reset --hard origin/main
 
-            echo "⏳ Ждем 10 секунд для полного запуска..."
-            sleep 10
+          mv .env.production.next .env.production
+          chmod 600 .env.production
 
-            echo "✅ Проверяем статус"
-            if docker ps | grep -q unpaywallbot_bot; then
-              echo "🎉 Деплой завершен успешно!"
-            else
-              echo "❌ Контейнер не запустился. Логи:"
-              docker logs unpaywallbot_bot_1 --tail 30
-              exit 1
-            fi
-
-  # ──────────────────────────────────────────────
-  # 4. Уведомление в Telegram
-  # ──────────────────────────────────────────────
-  notify:
-    name: Telegram notify
-    needs: [lint, typecheck, test, security, docker, deploy]
-    runs-on: ubuntu-latest
-    environment: production
-    if: always()
-
-    steps:
-      - name: Send Telegram message
-        uses: appleboy/telegram-action@master
-        with:
-          to: ${{ secrets.TELEGRAM_CHAT_ID }}
-          token: ${{ secrets.BOT_TOKEN }}
-          format: markdown
-          message: |
-            *🤖 UnpaywallBot CI/CD*
-
-            📦 `${{ github.sha }}`
-            👤 ${{ github.actor }}
-            📝 ${{ github.event.head_commit.message }}
-
-            🔍 Lint: ${{ needs.lint.result == 'success' && '✅' || '❌' }}
-            🔎 Types: ${{ needs.typecheck.result == 'success' && '✅' || '⚠️' }}
-            🧪 Tests: ${{ needs.test.result == 'success' && '✅' || '❌' }}
-            🛡 Security: ${{ needs.security.result == 'success' && '✅' || '⚠️' }}
-            🐳 Docker: ${{ needs.docker.result == 'success' && '✅' || '⏭' }}
-            🚀 Deploy: ${{ needs.deploy.result == 'success' && '✅' || '⏭' }}
-
-            [Workflow](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          BOT_IMAGE="$image_ref" docker compose pull bot
+          BOT_IMAGE="$image_ref" docker compose up -d --remove-orphans
+          BOT_IMAGE="$image_ref" docker compose ps
+          BOT_IMAGE="$image_ref" \
+            docker compose exec -T bot python -m bot.healthcheck
+          REMOTE
