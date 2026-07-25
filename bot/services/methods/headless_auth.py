@@ -10,6 +10,8 @@ import logging
 from playwright.async_api import (
     Page,
     Playwright,
+    Route,
+    WebSocketRoute,
     async_playwright,
 )
 from playwright.async_api import (
@@ -21,6 +23,10 @@ from bot.auth.account_manager import (
     AccountManager,
 )
 from bot.models.article import Article
+from bot.security.url_guard import (
+    UnsafeUrlError,
+    ensure_public_url,
+)
 from bot.services.content_extractor import ContentExtractor
 from bot.utils.url_utils import (
     is_same_domain,
@@ -48,6 +54,51 @@ _CONTENT_SELECTORS = (
 )
 
 
+async def _guard_browser_request(
+    route: Route,
+    root_url: str,
+) -> None:
+    """Проверить запрос браузера."""
+    request = route.request
+    target_url = request.url
+
+    if not target_url.startswith(('http://', 'https://')):
+        await route.continue_()
+        return
+
+    try:
+        await ensure_public_url(target_url)
+    except UnsafeUrlError:
+        logger.warning(
+            'Playwright заблокировал URL: %s',
+            target_url,
+        )
+        await route.abort('blockedbyclient')
+        return
+
+    if (
+        request.method not in {'GET', 'HEAD'}
+        and not is_same_domain(target_url, root_url)
+    ):
+        logger.warning(
+            'Playwright заблокировал cross-domain %s: %s',
+            request.method,
+            target_url,
+        )
+        await route.abort('blockedbyclient')
+        return
+
+    await route.continue_()
+
+
+def _block_websocket(route: WebSocketRoute) -> None:
+    """Отклонить WebSocket из браузера."""
+    route.close(
+        code=1008,
+        reason='WebSocket disabled',
+    )
+
+
 async def fetch_via_headless_auth(
     url: str,
     user_id: int,
@@ -58,6 +109,8 @@ async def fetch_via_headless_auth(
     norm_url = normalize_url(url)
     if not norm_url:
         return None
+
+    await ensure_public_url(norm_url)
 
     account = await account_manager.get_account_for_url(
         norm_url,
@@ -91,6 +144,20 @@ async def fetch_via_headless_auth(
                 'height': 800,
             },
             user_agent=_DEFAULT_USER_AGENT,
+            accept_downloads=False,
+            service_workers='block',
+        )
+
+        async def guard_route(route: Route) -> None:
+            await _guard_browser_request(
+                route,
+                norm_url,
+            )
+
+        await context.route('**/*', guard_route)
+        await context.route_web_socket(
+            '**/*',
+            _block_websocket,
         )
 
         if account.session_cookies:
@@ -130,6 +197,13 @@ async def fetch_via_headless_auth(
                 norm_url,
             )
             await _handle_login(page, account)
+            if not is_same_domain(page.url, norm_url):
+                msg = (
+                    'Cross-domain login completion blocked: '
+                    f'{page.url}'
+                )
+                raise RuntimeError(msg)
+
             await page.goto(
                 norm_url,
                 wait_until='networkidle',
