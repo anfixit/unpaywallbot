@@ -91,9 +91,11 @@ async def _guard_browser_request(
     await route.continue_()
 
 
-def _block_websocket(route: WebSocketRoute) -> None:
+async def _block_websocket(
+    route: WebSocketRoute,
+) -> None:
     """Отклонить WebSocket из браузера."""
-    route.close(
+    await route.close(
         code=1008,
         reason='WebSocket disabled',
     )
