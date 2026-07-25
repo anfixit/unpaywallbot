@@ -1,0 +1,44 @@
+name: Apply CI hotfix
+
+on:
+  push:
+    branches:
+      - hotfix/restore-green-ci
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out hotfix branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: hotfix/restore-green-ci
+
+      - name: Apply corrections
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git apply --check .github/ci-hotfix.patch
+          git apply .github/ci-hotfix.patch
+          rm -f \
+            .github/ci-hotfix.patch \
+            .github/placeholder.tmp \
+            .github/placeholder2.tmp \
+            .github/placeholder3.tmp \
+            .github/placeholder4.tmp
+          git diff --check
+
+      - name: Commit corrections
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email \
+            '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix(ci): restore green quality and test gates'
+          git push origin HEAD:hotfix/restore-green-ci
