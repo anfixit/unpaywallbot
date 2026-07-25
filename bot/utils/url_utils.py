@@ -1,10 +1,7 @@
-"""Утилиты для парсинга, валидации и нормализации URL.
-
-Используются во всех модулях бота для единообразной
-обработки URL-адресов статей.
-"""
+"""Парсинг, валидация и нормализация URL."""
 
 import hashlib
+import ipaddress
 from urllib.parse import (
     parse_qs,
     urlencode,
@@ -27,183 +24,122 @@ __all__ = [
     'normalize_url',
 ]
 
-# Схемы, которые точно не наши
 _REJECTED_SCHEMES = frozenset({
-    'ftp', 'ftps', 'javascript', 'data',
-    'file', 'mailto', 'tel', 'ssh',
+    'data',
+    'file',
+    'ftp',
+    'ftps',
+    'javascript',
+    'mailto',
+    'ssh',
+    'tel',
 })
+_ALLOWED_PORTS = frozenset({80, 443})
 
 
 def _ensure_scheme(url: str) -> str:
-    """Добавить https:// если схема отсутствует."""
-    if not url.startswith(('http://', 'https://')):
+    """Добавить HTTPS, если схема не указана."""
+    if not url.lower().startswith(('http://', 'https://')):
         return f'https://{url}'
     return url
 
 
 def _has_rejected_scheme(url: str) -> bool:
-    """Проверить, начинается ли URL с запрещённой схемы."""
+    """Проверить явно запрещённую схему."""
     lower = url.lower()
-    for scheme in _REJECTED_SCHEMES:
-        if lower.startswith(f'{scheme}:'):
-            return True
-    return False
+    return any(
+        lower.startswith(f'{scheme}:')
+        for scheme in _REJECTED_SCHEMES
+    )
 
 
-def extract_domain(url: str) -> str:
-    """Извлечь домен без протокола, www и пути.
+def _parse_valid_url(url: object):
+    """Вернуть parsed URL или None после безопасной проверки."""
+    if not isinstance(url, str):
+        return None
 
-    Args:
-        url: Полный URL (может содержать протокол,
-            путь, query).
+    value = url.strip()
+    if not value or len(value) > MAX_URL_LENGTH:
+        return None
 
-    Returns:
-        Домен вида 'example.com'.
-        Пустая строка если URL невалиден.
-
-    Examples:
-        >>> extract_domain(
-        ...     'https://www.telegraph.co.uk/news/'
-        ... )
-        'telegraph.co.uk'
-        >>> extract_domain('http://nytimes.com/article')
-        'nytimes.com'
-    """
-    if not url or not isinstance(url, str):
-        return ''
-
-    url = url.strip()
-    if not url:
-        return ''
-
-    if _has_rejected_scheme(url):
-        return ''
+    if _has_rejected_scheme(value):
+        return None
 
     try:
-        parsed = urlparse(_ensure_scheme(url))
+        parsed = urlparse(_ensure_scheme(value))
     except ValueError:
+        return None
+
+    if parsed.scheme.lower() not in VALID_URL_SCHEMES:
+        return None
+
+    if parsed.username or parsed.password:
+        return None
+
+    hostname = parsed.hostname
+    if not hostname:
+        return None
+
+    hostname = hostname.rstrip('.').lower()
+    if '.' not in hostname or any(char.isspace() for char in hostname):
+        return None
+
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        pass
+    else:
+        return None
+
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+
+    if port is not None and port not in _ALLOWED_PORTS:
+        return None
+
+    return parsed
+
+
+def extract_domain(url: object) -> str:
+    """Извлечь hostname без ``www``."""
+    parsed = _parse_valid_url(url)
+    if parsed is None or parsed.hostname is None:
         return ''
 
-    domain = parsed.netloc.lower().strip()
+    domain = parsed.hostname.rstrip('.').lower()
     if domain.startswith('www.'):
         domain = domain[4:]
-
-    # Домен должен содержать хотя бы одну точку
-    if '.' not in domain:
-        return ''
-
     return domain
 
 
-def is_valid_url(url: str) -> bool:
-    """Проверить, является ли строка валидным URL.
-
-    Args:
-        url: Строка для валидации.
-
-    Returns:
-        True если URL имеет допустимый формат
-        и схему.
-
-    Examples:
-        >>> is_valid_url('https://telegraph.co.uk')
-        True
-        >>> is_valid_url('not a url')
-        False
-        >>> is_valid_url('ftp://example.com')
-        False
-    """
-    if not url or not isinstance(url, str):
-        return False
-
-    url = url.strip()
-    if not url:
-        return False
-
-    if len(url) > MAX_URL_LENGTH:
-        return False
-
-    # Отклоняем запрещённые схемы до _ensure_scheme
-    if _has_rejected_scheme(url):
-        return False
-
-    if '.' not in url and not url.startswith(
-        ('http://', 'https://'),
-    ):
-        return False
-
-    try:
-        parsed = urlparse(_ensure_scheme(url))
-    except ValueError:
-        return False
-
-    if parsed.scheme not in VALID_URL_SCHEMES:
-        return False
-
-    # Домен должен содержать точку
-    netloc = parsed.netloc.lower().strip()
-    if '.' not in netloc:
-        return False
-
-    return True
+def is_valid_url(url: object) -> bool:
+    """Проверить безопасный синтаксис публичного HTTP(S) URL."""
+    return _parse_valid_url(url) is not None
 
 
-def normalize_url(url: str) -> str:
-    """Нормализовать URL к единому формату.
-
-    Принудительно HTTPS, убирает www,
-    убирает фрагменты, сохраняет query params.
-
-    Args:
-        url: Входной URL.
-
-    Returns:
-        Нормализованный URL. Пустая строка
-        если вход невалиден.
-
-    Examples:
-        >>> normalize_url(
-        ...     'http://Telegraph.co.uk/#section'
-        ... )
-        'https://telegraph.co.uk'
-        >>> normalize_url('https://www.nytimes.com/')
-        'https://nytimes.com'
-    """
-    if not url or not is_valid_url(url):
+def normalize_url(url: object) -> str:
+    """Нормализовать URL: HTTPS, без www и fragment."""
+    parsed = _parse_valid_url(url)
+    if parsed is None or parsed.hostname is None:
         return ''
 
-    parsed = urlparse(_ensure_scheme(url))
-
-    domain = parsed.netloc.lower()
+    domain = parsed.hostname.rstrip('.').lower()
     if domain.startswith('www.'):
         domain = domain[4:]
 
-    path = parsed.path.rstrip('/') or ''
-    query = parsed.query
-
+    path = parsed.path.rstrip('/')
     normalized = f'https://{domain}{path}'
-    if query:
-        normalized = f'{normalized}?{query}'
+
+    if parsed.query:
+        normalized = f'{normalized}?{parsed.query}'
 
     return normalized
 
 
-def get_url_hash(url: str) -> str:
-    """Создать стабильный SHA-256 хеш.
-
-    Нормализует URL перед хешированием, чтобы
-    одна и та же статья всегда получала один хеш.
-
-    Args:
-        url: URL для хеширования.
-
-    Returns:
-        Hex-строка SHA-256 хеша.
-        Пустая строка если URL невалиден.
-    """
-    if not url:
-        return ''
-
+def get_url_hash(url: object) -> str:
+    """Создать стабильный SHA-256 хеш нормализованного URL."""
     normalized = normalize_url(url)
     if not normalized:
         return ''
@@ -213,105 +149,45 @@ def get_url_hash(url: str) -> str:
     ).hexdigest()
 
 
-def is_same_domain(url1: str, url2: str) -> bool:
-    """Проверить, принадлежат ли URL одному домену.
-
-    Args:
-        url1: Первый URL.
-        url2: Второй URL.
-
-    Returns:
-        True если домены совпадают.
-
-    Examples:
-        >>> is_same_domain(
-        ...     'https://telegraph.co.uk/a',
-        ...     'http://telegraph.co.uk/b',
-        ... )
-        True
-    """
+def is_same_domain(url1: object, url2: object) -> bool:
+    """Проверить принадлежность URL одному hostname."""
     domain1 = extract_domain(url1)
     domain2 = extract_domain(url2)
-
-    return bool(
-        domain1
-        and domain2
-        and domain1 == domain2
-    )
+    return bool(domain1 and domain1 == domain2)
 
 
-def extract_path(url: str) -> str:
-    """Извлечь path-компонент из URL.
-
-    Args:
-        url: Полный URL.
-
-    Returns:
-        Путь начинающийся с '/'.
-        Пустая строка если URL невалиден.
-
-    Examples:
-        >>> extract_path(
-        ...     'https://site.com/articles/123'
-        ... )
-        '/articles/123'
-    """
-    if not url:
+def extract_path(url: object) -> str:
+    """Извлечь path-компонент безопасного URL."""
+    parsed = _parse_valid_url(url)
+    if parsed is None:
         return ''
-
-    try:
-        parsed = urlparse(_ensure_scheme(url))
-    except ValueError:
-        return ''
-
     return parsed.path or '/'
 
 
-def clean_url(url: str) -> str:
-    """Очистить URL от трекинговых параметров.
-
-    Удаляет UTM-метки, fbclid, gclid и другие
-    трекинговые параметры. Сохраняет остальные
-    query params.
-
-    Args:
-        url: URL с возможными трекинговыми параметрами.
-
-    Returns:
-        Чистый URL без трекинговых params.
-
-    Examples:
-        >>> clean_url(
-        ...     'https://site.com/?utm_source=fb&id=1'
-        ... )
-        'https://site.com/?id=1'
-    """
-    if not url or not is_valid_url(url):
+def clean_url(url: object) -> str:
+    """Удалить известные tracking-параметры."""
+    parsed = _parse_valid_url(url)
+    if parsed is None:
         return ''
 
-    parsed = urlparse(_ensure_scheme(url))
+    domain = parsed.hostname or ''
+    if domain.startswith('www.'):
+        domain = domain[4:]
 
+    base = f'{parsed.scheme.lower()}://{domain}{parsed.path}'
     if not parsed.query:
-        return (
-            f'{parsed.scheme}://{parsed.netloc}'
-            f'{parsed.path}'
-        )
+        return base
 
     params = parse_qs(
-        parsed.query, keep_blank_values=True,
+        parsed.query,
+        keep_blank_values=True,
     )
     clean_params = {
-        k: v
-        for k, v in params.items()
-        if k not in TRACKING_PARAMS
+        key: value
+        for key, value in params.items()
+        if key not in TRACKING_PARAMS
     }
+    if not clean_params:
+        return base
 
-    base = (
-        f'{parsed.scheme}://{parsed.netloc}'
-        f'{parsed.path}'
-    )
-
-    if clean_params:
-        query = urlencode(clean_params, doseq=True)
-        return f'{base}?{query}'
-    return base
+    return f'{base}?{urlencode(clean_params, doseq=True)}'
