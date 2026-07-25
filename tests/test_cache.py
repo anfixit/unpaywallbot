@@ -1,6 +1,6 @@
 """Тесты для кеширования статей."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -77,12 +77,17 @@ async def test_invalidate_cache(
 async def test_cache_stats() -> None:
     """Получение статистики кеша."""
     mock_redis = _mock_redis_client()
-    mock_redis.client.keys = AsyncMock(
-        return_value=[
+
+    async def scan_keys():
+        for key in (
             'article:1',
             'article:2',
             'article:3',
-        ],
+        ):
+            yield key
+
+    mock_redis.client.scan_iter = Mock(
+        return_value=scan_keys(),
     )
     mock_redis.client.info = AsyncMock(
         return_value={'used_memory': 1024},
