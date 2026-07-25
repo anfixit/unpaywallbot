@@ -7,6 +7,7 @@ Telegram рендерит Instant View автоматически.
 Зависимость: ``uv add 'telegraph[aio]'``
 """
 
+import html
 import logging
 
 from bot.constants import MAX_MESSAGE_LENGTH
@@ -68,13 +69,13 @@ class TelegraphPublisher:
             client = Telegraph(self._token)
 
             # Конвертируем plain text → HTML
-            html = _text_to_html(
+            html_content = _text_to_html(
                 text, source_url,
             )
 
             response = await client.create_page(
                 title=title[:256],
-                html_content=html,
+                html_content=html_content,
                 author_name=author or 'Источник',
                 author_url=source_url or '',
             )
@@ -113,8 +114,8 @@ def _text_to_html(
 ) -> str:
     """Конвертировать plain text в HTML.
 
-    Абзацы (разделённые ``\\n\\n``) → ``<p>``.
-    Одиночные ``\\n`` → ``<br>``.
+    Абзацы (разделённые ``\n\n``) → ``<p>``.
+    Одиночные ``\n`` → ``<br>``.
 
     Args:
         text: Plain text.
@@ -130,14 +131,18 @@ def _text_to_html(
         para = para.strip()
         if not para:
             continue
-        # Заменяем одиночные переносы на <br>
-        para = para.replace('\n', '<br>')
-        html_parts.append(f'<p>{para}</p>')
+        safe_para = html.escape(para)
+        safe_para = safe_para.replace('\n', '<br>')
+        html_parts.append(f'<p>{safe_para}</p>')
 
     if source_url:
+        safe_source_url = html.escape(
+            source_url,
+            quote=True,
+        )
         html_parts.append(
-            f'<p><a href="{source_url}">'
-            f'Оригинал статьи</a></p>',
+            f'<p><a href="{safe_source_url}">'
+            'Оригинал статьи</a></p>',
         )
 
     return '\n'.join(html_parts)
