@@ -5,7 +5,7 @@ import secrets
 
 import httpx
 
-from bot.constants import BypassMethod, MAX_RETRY_COUNT
+from bot.constants import MAX_RETRY_COUNT, BypassMethod
 from bot.models.article import Article
 from bot.services.content_extractor import ContentExtractor
 from bot.services.http_client import create_safe_http_client
