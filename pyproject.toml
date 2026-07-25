@@ -1,10 +1,7 @@
 [project]
 name = 'unpaywallbot'
 version = '0.1.0'
-description = (
-    'Telegram bot for responsible analysis of '
-    'publicly available article content'
-)
+description = 'Telegram bot for responsible analysis of public article content'
 readme = 'README.md'
 requires-python = '>=3.12'
 license = {file = 'LICENSE'}
