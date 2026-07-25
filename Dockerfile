@@ -1,6 +1,7 @@
-FROM python:3.12-slim-bookworm
-
 ARG UV_VERSION=0.11.32
+
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
+FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -10,8 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     PATH="/app/.venv/bin:${PATH}"
 
-COPY --from=ghcr.io/astral-sh/uv:${UV_VERSION} \
-    /uv /uvx /usr/local/bin/
+COPY --from=uv /uv /uvx /usr/local/bin/
 
 RUN groupadd --gid 10001 appuser \
     && useradd --create-home --uid 10001 \
