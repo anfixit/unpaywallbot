@@ -38,10 +38,40 @@ jobs:
         run: uv sync --locked --all-extras
 
       - name: Ruff
-        run: uv run ruff check bot tests scripts
+        id: ruff
+        run: |
+          set +e
+          uv run ruff check bot tests scripts > ruff-report.txt 2>&1
+          status=$?
+          cat ruff-report.txt
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: Mypy
-        run: uv run mypy bot
+        id: mypy
+        run: |
+          set +e
+          uv run mypy bot > mypy-report.txt 2>&1
+          status=$?
+          cat mypy-report.txt
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload quality reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: quality-reports
+          path: |
+            ruff-report.txt
+            mypy-report.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Enforce quality gates
+        run: |
+          test "${{ steps.ruff.outputs.status }}" = "0"
+          test "${{ steps.mypy.outputs.status }}" = "0"
 
   test:
     name: Tests
@@ -98,15 +128,46 @@ jobs:
 
       - name: Export locked production dependencies
         run: >-
-          uv export --locked --no-dev
+          uv export --locked --no-dev --no-emit-project
           --format requirements-txt
           --output-file requirements-audit.txt
 
       - name: Audit dependencies
-        run: uvx pip-audit -r requirements-audit.txt
+        id: audit
+        run: |
+          set +e
+          uvx pip-audit -r requirements-audit.txt \
+            > pip-audit-report.txt 2>&1
+          status=$?
+          cat pip-audit-report.txt
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: Static security scan
-        run: uvx bandit -r bot -q
+        id: bandit
+        run: |
+          set +e
+          uvx bandit -r bot -q > bandit-report.txt 2>&1
+          status=$?
+          cat bandit-report.txt
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: security-reports
+          path: |
+            pip-audit-report.txt
+            bandit-report.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Enforce security gates
+        run: |
+          test "${{ steps.audit.outputs.status }}" = "0"
+          test "${{ steps.bandit.outputs.status }}" = "0"
 
   docker:
     name: Docker build
