@@ -9,7 +9,7 @@ The format follows Keep a Changelog principles. The project uses semantic versio
 ### Added
 
 - SSRF guard for URLs, redirects, DNS rebinding, private networks, IP literals, credentials, and non-standard ports
-- shared safe HTTP client with redirect and declared response-size limits
+- shared safe HTTP client with redirect and decoded response-size limits
 - production request timeout and controlled error handling
 - private-by-default production access policy
 - atomic Redis rate limiting
@@ -28,6 +28,9 @@ The format follows Keep a Changelog principles. The project uses semantic versio
 - Playwright browser installation is available to the runtime user
 - Telegram output uses safe HTML escaping
 - authenticated browser extraction refuses cross-domain login redirects
+- optional browser requests are checked against outbound URL policy
+- Telegraph publication is explicit opt-in and escapes article HTML
+- Redis cache statistics use incremental scanning instead of `KEYS`
 - production deployment uses immutable image tags
 
 ### Fixed
