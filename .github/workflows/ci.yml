@@ -39,15 +39,6 @@ jobs:
           set -Eeuo pipefail
           git apply --check --verbose /tmp/audit.patch
           git apply --index --verbose /tmp/audit.patch
-
-      - name: Restore final CI workflow
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cat .github/bootstrap/ci-*.txt \
-            | base64 --decode \
-            > .github/workflows/ci.yml
-          test -s .github/workflows/ci.yml
           rm -rf .github/bootstrap
           git add -A
           git status --short
@@ -59,7 +50,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email \
             '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'fix(ci): resolve audit quality gates'
+          git commit -m 'fix: resolve audit quality gates'
 
       - name: Push prepared audit changes
         shell: bash
