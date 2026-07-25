@@ -1,27 +1,13 @@
-"""Метод обхода WSJ paywall через AMP и Referer.
-
-Принцип работы (из BPW Chrome Extension):
-1. Добавляем ``?mod=rsswn`` — WSJ считает переход
-   из RSS-ридера и ослабляет paywall
-2. Ставим ``Referer: https://www.facebook.com`` —
-   WSJ отдаёт полный текст для Facebook-трафика
-3. Fallback: AMP-версия (``/amp/articles/...``)
-   отдаёт контент без JS-paywall
-
-Источник: bypass-paywalls-chrome, userscript
-Andrea Lazzarotto.
-"""
+"""Получение публичной версии страницы WSJ."""
 
 import logging
 import re
 
 import httpx
 
-from bot.constants import DEFAULT_TIMEOUT_SECONDS
 from bot.models.article import Article
-from bot.services.content_extractor import (
-    ContentExtractor,
-)
+from bot.services.content_extractor import ContentExtractor
+from bot.services.http_client import create_safe_http_client
 from bot.utils.url_utils import normalize_url
 
 __all__ = ['fetch_via_wsj']
@@ -38,9 +24,7 @@ _WSJ_HEADERS_FACEBOOK: dict[str, str] = {
         'externalhit_uatext.php)'
     ),
     'Referer': _FACEBOOK_REFERER,
-    'Accept': (
-        'text/html,application/xhtml+xml'
-    ),
+    'Accept': 'text/html,application/xhtml+xml',
     'Accept-Language': 'en-US,en;q=0.9',
 }
 
@@ -51,34 +35,20 @@ _WSJ_HEADERS_GOOGLE: dict[str, str] = {
         '+http://www.google.com/bot.html)'
     ),
     'Referer': _GOOGLE_REFERER,
-    'Accept': (
-        'text/html,application/xhtml+xml'
-    ),
+    'Accept': 'text/html,application/xhtml+xml',
     'Accept-Language': 'en-US,en;q=0.9',
 }
 
-# Паттерн WSJ-статьи для построения AMP URL.
-# Новый формат: /category/subcategory/slug-id
-# Старый формат: /articles/slug-id
 _WSJ_ARTICLE_RE = re.compile(
     r'wsj\.com/articles/(.+)',
 )
-
-# Общий паттерн: любой путь на wsj.com
 _WSJ_PATH_RE = re.compile(
     r'wsj\.com(/[^?#]+)',
 )
 
 
 def _build_rsswn_url(url: str) -> str:
-    """Добавить ``?mod=rsswn`` к URL.
-
-    Args:
-        url: Оригинальный WSJ URL.
-
-    Returns:
-        URL с параметром mod=rsswn.
-    """
+    """Добавить параметр ``mod=rsswn``."""
     if 'mod=rsswn' in url:
         return url
     separator = '&' if '?' in url else '?'
@@ -86,21 +56,7 @@ def _build_rsswn_url(url: str) -> str:
 
 
 def _build_amp_url(url: str) -> str | None:
-    """Построить AMP-версию WSJ URL.
-
-    Старый: ``wsj.com/articles/slug``
-    → ``wsj.com/amp/articles/slug``
-
-    Новый: ``wsj.com/lifestyle/careers/slug``
-    → ``wsj.com/amp/lifestyle/careers/slug``
-
-    Args:
-        url: Оригинальный WSJ URL.
-
-    Returns:
-        AMP URL или None если не статья.
-    """
-    # Старый формат /articles/...
+    """Построить AMP-вариант URL статьи."""
     match = _WSJ_ARTICLE_RE.search(url)
     if match:
         slug = match.group(1).split('?')[0]
@@ -109,7 +65,6 @@ def _build_amp_url(url: str) -> str | None:
             f'/amp/articles/{slug}'
         )
 
-    # Новый формат /category/slug-id
     match = _WSJ_PATH_RE.search(url)
     if match:
         path = match.group(1).split('?')[0]
@@ -123,25 +78,14 @@ async def fetch_via_wsj(
     extractor: ContentExtractor | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> Article | None:
-    """Извлечь статью WSJ через цепочку методов.
-
-    Цепочка: Facebook referer + rsswn →
-    Google referer + rsswn → AMP-версия.
-
-    Args:
-        url: URL статьи на wsj.com.
-        extractor: Экстрактор контента.
-        client: HTTP-клиент (для тестов).
-
-    Returns:
-        Article или None.
-    """
+    """Попробовать получить публичные варианты страницы WSJ."""
     if extractor is None:
         extractor = ContentExtractor()
 
     norm_url = normalize_url(url)
+    if not norm_url:
+        return None
 
-    # Шаг 1: Facebook referer + ?mod=rsswn
     article = await _try_fetch(
         _build_rsswn_url(norm_url),
         headers=_WSJ_HEADERS_FACEBOOK,
@@ -152,7 +96,6 @@ async def fetch_via_wsj(
     if article:
         return article
 
-    # Шаг 2: Googlebot + ?mod=rsswn
     article = await _try_fetch(
         _build_rsswn_url(norm_url),
         headers=_WSJ_HEADERS_GOOGLE,
@@ -163,7 +106,6 @@ async def fetch_via_wsj(
     if article:
         return article
 
-    # Шаг 3: AMP-версия
     amp_url = _build_amp_url(norm_url)
     if amp_url:
         article = await _try_fetch(
@@ -187,28 +129,15 @@ async def _try_fetch(
     client: httpx.AsyncClient | None,
     label: str,
 ) -> Article | None:
-    """Попробовать один метод извлечения.
-
-    Args:
-        url: URL для запроса.
-        headers: HTTP-заголовки.
-        extractor: Экстрактор контента.
-        client: HTTP-клиент.
-        label: Метка для логов.
-
-    Returns:
-        Article или None.
-    """
+    """Попробовать один вариант загрузки."""
     own_client = client is None
-    if own_client:
-        client = httpx.AsyncClient(
-            timeout=DEFAULT_TIMEOUT_SECONDS,
-            follow_redirects=True,
-        )
+    if client is None:
+        client = create_safe_http_client()
 
     try:
         response = await client.get(
-            url, headers=headers,
+            url,
+            headers=headers,
         )
 
         if response.status_code != 200:
@@ -221,13 +150,15 @@ async def _try_fetch(
             return None
 
         content_type = response.headers.get(
-            'content-type', '',
-        )
+            'content-type',
+            '',
+        ).lower()
         if 'text/html' not in content_type:
             return None
 
         article = extractor.extract(
-            response.text, url,
+            response.text,
+            url,
         )
         if article and not article.is_empty:
             logger.info(
@@ -238,7 +169,6 @@ async def _try_fetch(
             return article
 
         return None
-
     except httpx.HTTPError:
         logger.debug(
             'WSJ %s: ошибка для %s',
@@ -247,7 +177,6 @@ async def _try_fetch(
             exc_info=True,
         )
         return None
-
     finally:
         if own_client:
             await client.aclose()
