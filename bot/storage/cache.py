@@ -191,14 +191,20 @@ async def get_cache_stats() -> CacheStats:
     """Получить статистику использования кеша."""
     try:
         client = get_redis_client().client
-        keys = await client.keys(f'{_KEY_PREFIX}:*')
+        articles_count = 0
+        async for _key in client.scan_iter(
+            match=f'{_KEY_PREFIX}:*',
+            count=100,
+        ):
+            articles_count += 1
+
         info = await client.info('memory')
         raw_memory = info.get('used_memory', 0)
         memory_bytes = (
             raw_memory if isinstance(raw_memory, int) else 0
         )
         return {
-            'articles_count': len(keys),
+            'articles_count': articles_count,
             'memory_bytes': memory_bytes,
             'memory_mb': round(memory_bytes / 1024 / 1024, 2),
         }
