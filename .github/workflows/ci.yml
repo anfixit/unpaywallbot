@@ -32,14 +32,13 @@ jobs:
             | base64 --decode \
             | gzip --decompress \
             > /tmp/audit.patch
-          wc -c /tmp/audit.patch
-          head -n 5 /tmp/audit.patch
-
-      - name: Validate prepared patch
-        run: git apply --check --verbose /tmp/audit.patch
 
       - name: Apply prepared patch
-        run: git apply --index --verbose /tmp/audit.patch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git apply --check --verbose /tmp/audit.patch
+          git apply --index --verbose /tmp/audit.patch
 
       - name: Restore final CI workflow
         shell: bash
@@ -51,6 +50,7 @@ jobs:
           test -s .github/workflows/ci.yml
           rm -rf .github/bootstrap
           git add -A
+          git status --short
 
       - name: Commit prepared audit changes
         shell: bash
@@ -60,4 +60,9 @@ jobs:
           git config user.email \
             '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'fix(ci): resolve audit quality gates'
+
+      - name: Push prepared audit changes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
           git push origin HEAD:agent/production-readiness-audit
