@@ -1,4 +1,4 @@
-"""Безопасный HTTP-клиент для загрузки веб-страниц."""
+"""Безопасная загрузка веб-страниц."""
 
 import httpx
 
@@ -13,7 +13,7 @@ __all__ = ['ResponseTooLargeError', 'create_safe_http_client']
 
 
 class ResponseTooLargeError(httpx.RequestError):
-    """Сервер объявил ответ больше допустимого размера."""
+    """Ответ превысил допустимый лимит."""
 
 
 async def _validate_request(request: httpx.Request) -> None:
@@ -21,32 +21,54 @@ async def _validate_request(request: httpx.Request) -> None:
     await ensure_public_url(str(request.url), request=request)
 
 
-async def _validate_response(response: httpx.Response) -> None:
-    """Отклонить заведомо слишком большой ответ."""
+async def _buffer_limited_response(
+    response: httpx.Response,
+) -> None:
+    """Прочитать ответ с лимитом decoded-данных."""
     raw_length = response.headers.get('content-length')
-    if not raw_length:
-        return
+    if raw_length:
+        try:
+            content_length = int(raw_length)
+        except ValueError:
+            content_length = 0
 
-    try:
-        content_length = int(raw_length)
-    except ValueError:
-        return
+        if content_length > MAX_HTTP_RESPONSE_BYTES:
+            await response.aclose()
+            raise ResponseTooLargeError(
+                (
+                    'Ответ превышает допустимый '
+                    'размер'
+                ),
+                request=response.request,
+            )
 
-    if content_length <= MAX_HTTP_RESPONSE_BYTES:
-        return
+    chunks: list[bytes] = []
+    total_bytes = 0
 
-    await response.aclose()
-    raise ResponseTooLargeError(
-        'Ответ превышает допустимый размер',
-        request=response.request,
-    )
+    async for chunk in response.aiter_bytes():
+        total_bytes += len(chunk)
+        if total_bytes > MAX_HTTP_RESPONSE_BYTES:
+            await response.aclose()
+            raise ResponseTooLargeError(
+                (
+                    'Ответ превышает допустимый '
+                    'размер'
+                ),
+                request=response.request,
+            )
+        chunks.append(chunk)
+
+    # Hook работает до обычного чтения тела.
+    # Сохраняем проверенное тело.
+    response._content = b''.join(chunks)  # noqa: SLF001
 
 
 def create_safe_http_client(
     *,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    transport: httpx.AsyncBaseTransport | None = None,
 ) -> httpx.AsyncClient:
-    """Создать клиент с SSRF-защитой и лимитами."""
+    """Создать клиент с SSRF-защитой."""
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout_seconds),
         follow_redirects=True,
@@ -56,8 +78,9 @@ def create_safe_http_client(
             max_keepalive_connections=10,
         ),
         trust_env=False,
+        transport=transport,
         event_hooks={
             'request': [_validate_request],
-            'response': [_validate_response],
+            'response': [_buffer_limited_response],
         },
     )
