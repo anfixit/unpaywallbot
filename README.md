@@ -199,6 +199,8 @@ tests/           unit and integration tests
 
 Do not report vulnerabilities in public issues. Follow [SECURITY.md](SECURITY.md).
 
+Optional encrypted credentials are documented in [docs/ACCOUNT_STORAGE.md](docs/ACCOUNT_STORAGE.md).
+
 The current production-readiness review is documented in [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Contributing

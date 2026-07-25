@@ -19,7 +19,7 @@ The format follows Keep a Changelog principles. The project uses semantic versio
 - blocking CI for lint, types, tests, dependency audit, security scan, and Docker build
 - GHCR release and native OpenSSH deployment workflow
 - English and Russian README files
-- security, contribution, conduct, support, audit, and deployment documentation
+- security, contribution, conduct, support, audit, deployment, and account-storage documentation
 
 ### Changed
 
@@ -32,6 +32,8 @@ The format follows Keep a Changelog principles. The project uses semantic versio
 - Telegraph publication is explicit opt-in and escapes article HTML
 - Redis cache statistics use incremental scanning instead of `KEYS`
 - production deployment uses immutable image tags
+- account storage uses a salted versioned encryption envelope
+- account storage writes are validated, serialized, and atomic
 
 ### Fixed
 
@@ -48,6 +50,8 @@ The format follows Keep a Changelog principles. The project uses semantic versio
 - third-party SSH and notification actions were removed from deployment
 - raw Telegram identifiers are no longer logged by default
 - production cannot start accidentally with an empty allowlist
+- account passwords are no longer accepted as process arguments
+- unreadable credential storage fails closed instead of resetting silently
 
 ## [0.1.0]
 

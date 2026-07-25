@@ -179,6 +179,7 @@ Production-образ публикуется в GHCR только после у�
 - правила участия: [CONTRIBUTING.md](CONTRIBUTING.md)
 - кодекс поведения: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - поддержка: [SUPPORT.md](SUPPORT.md)
+- encrypted storage: [docs/ACCOUNT_STORAGE.md](docs/ACCOUNT_STORAGE.md)
 - отчёт аудита: [docs/AUDIT.md](docs/AUDIT.md)
 
 ## Лицензия
