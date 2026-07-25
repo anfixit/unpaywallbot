@@ -58,13 +58,19 @@ class Encryptor:
         if self._fixed_key is not None:
             self._legacy_fernet = Fernet(self._fixed_key)
         else:
-            assert self._secret is not None
             legacy_key = self._derive_key(
-                self._secret,
+                self._require_secret(),
                 LEGACY_PBKDF2_SALT,
                 LEGACY_PBKDF2_ITERATIONS,
             )
             self._legacy_fernet = Fernet(legacy_key)
+
+    def _require_secret(self) -> str:
+        """Вернуть парольную фразу или завершиться явно."""
+        if self._secret is None:
+            msg = 'Encryptor не содержит secret'
+            raise RuntimeError(msg)
+        return self._secret
 
     @staticmethod
     def _derive_key(
@@ -94,10 +100,9 @@ class Encryptor:
             salt: bytes | None = None
             fernet = Fernet(self._fixed_key)
         else:
-            assert self._secret is not None
             salt = secrets.token_bytes(PBKDF2_SALT_BYTES)
             key = self._derive_key(
-                self._secret,
+                self._require_secret(),
                 salt,
                 PBKDF2_ITERATIONS,
             )
@@ -144,9 +149,8 @@ class Encryptor:
             salt = self._decode_salt(envelope.get('salt'))
             if salt is None:
                 return None
-            assert self._secret is not None
             key = self._derive_key(
-                self._secret,
+                self._require_secret(),
                 salt,
                 PBKDF2_ITERATIONS,
             )
