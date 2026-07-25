@@ -1,34 +1,89 @@
-# docker-compose.yml
-# Запуск: docker compose up -d
-# Логи: docker compose logs -f bot
+name: unpaywallbot
 
 services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --save
+      - "60"
+      - "1"
+    expose:
+      - "6379"
     volumes:
       - redis_data:/data
+    networks:
+      - backend
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      interval: 10s
       timeout: 3s
       retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
 
   bot:
-    build: .
+    image: ${BOT_IMAGE:-ghcr.io/anfixit/unpaywallbot:latest}
+    build:
+      context: .
     restart: unless-stopped
+    init: true
     depends_on:
       redis:
         condition: service_healthy
     env_file:
       - .env.production
     environment:
-      - REDIS_URL=redis://redis:6379/0
+      REDIS_URL: redis://redis:6379/0
     volumes:
-      - ./data:/app/data
-    command: uv run python -m bot.main
+      - bot_logs:/app/data/logs
+    networks:
+      - backend
+      - egress
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+      - /home/appuser/.cache:rw,nosuid,nodev,size=128m
+      - /home/appuser/.config:rw,nosuid,nodev,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.0
+    shm_size: 512m
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-m", "bot.healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+networks:
+  backend:
+    internal: true
+  egress:
 
 volumes:
+  bot_logs:
   redis_data:
