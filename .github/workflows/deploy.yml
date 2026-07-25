@@ -9,7 +9,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
   group: production
@@ -18,7 +17,8 @@ concurrency:
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}
   SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
-  UV_VERSION: "0.11.32"
+  UV_VERSION: '0.11.32'
+  DEPLOYMENT_STATUS_ISSUE: '17'
 
 jobs:
   publish:
@@ -27,6 +27,9 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     outputs:
       image: ${{ steps.image.outputs.ref }}
     steps:
@@ -66,8 +69,12 @@ jobs:
 
   deploy:
     name: Deploy production
+    if: vars.DEPLOY_ENABLED == 'true'
     needs: publish
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     environment: production
     env:
       SSH_HOST: ${{ secrets.SSH_HOST }}
@@ -92,6 +99,7 @@ jobs:
             SSH_HOST
             SSH_USER
             SSH_PRIVATE_KEY
+            SSH_KNOWN_HOSTS
             DEPLOY_PATH
             BOT_TOKEN
             ENCRYPTION_KEY
@@ -107,19 +115,12 @@ jobs:
       - name: Configure SSH
         run: |
           set -Eeuo pipefail
-          port="${SSH_PORT:-22}"
           install -m 700 -d "$HOME/.ssh"
           printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
-          chmod 600 "$HOME/.ssh/id_ed25519"
-
-          if [[ -n "${SSH_KNOWN_HOSTS:-}" ]]; then
-            printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
-          else
-            echo 'SSH_KNOWN_HOSTS is not set; bootstrapping the host key.'
-            ssh-keyscan -p "$port" -H "$SSH_HOST" \
-              > "$HOME/.ssh/known_hosts"
-          fi
-          chmod 600 "$HOME/.ssh/known_hosts"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 \
+            "$HOME/.ssh/id_ed25519" \
+            "$HOME/.ssh/known_hosts"
           ssh-keygen -lf "$HOME/.ssh/known_hosts"
 
       - name: Verify server prerequisites
@@ -204,6 +205,7 @@ jobs:
           set -Eeuo pipefail
           deploy_path="$1"
           image_ref="$2"
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
 
           cd "$deploy_path"
           git fetch --prune origin main
@@ -236,19 +238,42 @@ jobs:
           fi
 
           BOT_IMAGE="$image_ref" docker compose ps
-          docker logout ghcr.io >/dev/null 2>&1 || true
           REMOTE
 
   notify:
-    name: Telegram deployment notification
+    name: Deployment notification
     if: always()
     needs: [publish, deploy]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     env:
       TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_NOTIFICATION_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_NOTIFICATION_CHAT_ID }}
     steps:
-      - name: Send deployment result
+      - name: Record deployment result in issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          body=$(cat <<MESSAGE
+          ### Deployment run ${{ github.run_number }}
+
+          - Commit: \`${SOURCE_SHA}\`
+          - Publish: **${{ needs.publish.result }}**
+          - Deploy: **${{ needs.deploy.result }}**
+          - Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MESSAGE
+          )
+
+          if ! gh issue comment "$DEPLOYMENT_STATUS_ISSUE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --body "$body"; then
+            echo '::warning::Could not update deployment status issue.'
+          fi
+
+      - name: Send Telegram deployment result
         shell: bash
         run: |
           if [[ -z "$TELEGRAM_TOKEN" || -z "$TELEGRAM_CHAT_ID" ]]; then
