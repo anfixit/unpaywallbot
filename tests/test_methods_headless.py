@@ -2,10 +2,13 @@
 
 from unittest.mock import AsyncMock, Mock, patch
 
+import httpx
 import pytest
 
 from bot.models.article import Article
+from bot.security.url_guard import UnsafeUrlError
 from bot.services.methods.headless_auth import (
+    _guard_browser_request,
     fetch_via_headless_auth,
 )
 
@@ -53,6 +56,8 @@ async def test_headless_auth_success(
     mock_context.new_page = AsyncMock(
         return_value=mock_page,
     )
+    mock_context.route = AsyncMock()
+    mock_context.route_web_socket = AsyncMock()
     mock_context.add_cookies = AsyncMock()
     mock_context.cookies = AsyncMock(
         return_value=[],
@@ -88,10 +93,17 @@ async def test_headless_auth_success(
         ),
     )
 
-    with patch(
-        'bot.services.methods.headless_auth'
-        '.async_playwright',
-        return_value=mock_pw_factory,
+    with (
+        patch(
+            'bot.services.methods.headless_auth'
+            '.async_playwright',
+            return_value=mock_pw_factory,
+        ),
+        patch(
+            'bot.services.methods.headless_auth'
+            '.ensure_public_url',
+            new=AsyncMock(),
+        ),
     ):
         result = await fetch_via_headless_auth(
             'https://test.com',
@@ -102,3 +114,68 @@ async def test_headless_auth_success(
 
     assert result is not None
     assert result.content == 'Content'
+    mock_context.route.assert_awaited_once()
+    mock_context.route_web_socket.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_browser_guard_blocks_private_url() -> None:
+    """Остановить запрос к непубличному адресу."""
+    route = Mock()
+    route.request = Mock(
+        url='http://169.254.169.254/latest',
+        method='GET',
+    )
+    route.abort = AsyncMock()
+    route.continue_ = AsyncMock()
+    request = httpx.Request(
+        'GET',
+        route.request.url,
+    )
+
+    with patch(
+        'bot.services.methods.headless_auth'
+        '.ensure_public_url',
+        new=AsyncMock(
+            side_effect=UnsafeUrlError(
+                'blocked',
+                request=request,
+            ),
+        ),
+    ):
+        await _guard_browser_request(
+            route,
+            'https://example.com/article',
+        )
+
+    route.abort.assert_awaited_once_with(
+        'blockedbyclient',
+    )
+    route.continue_.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_browser_guard_blocks_cross_domain_post() -> None:
+    """Не отправлять credentials на другой домен."""
+    route = Mock()
+    route.request = Mock(
+        url='https://tracker.example/collect',
+        method='POST',
+    )
+    route.abort = AsyncMock()
+    route.continue_ = AsyncMock()
+
+    with patch(
+        'bot.services.methods.headless_auth'
+        '.ensure_public_url',
+        new=AsyncMock(),
+    ):
+        await _guard_browser_request(
+            route,
+            'https://publisher.example/article',
+        )
+
+    route.abort.assert_awaited_once_with(
+        'blockedbyclient',
+    )
+    route.continue_.assert_not_awaited()
