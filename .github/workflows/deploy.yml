@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
   packages: write
 
 concurrency:
@@ -240,7 +241,7 @@ jobs:
           REMOTE
 
   notify:
-    name: Telegram deployment notification
+    name: Deployment notification
     if: always()
     needs: [publish, deploy]
     runs-on: ubuntu-latest
@@ -248,7 +249,25 @@ jobs:
       TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_NOTIFICATION_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_NOTIFICATION_CHAT_ID }}
     steps:
-      - name: Send deployment result
+      - name: Record deployment result in issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          body=$(cat <<MESSAGE
+          ### Deployment run ${{ github.run_number }}
+
+          - Commit: \`${SOURCE_SHA}\`
+          - Publish: **${{ needs.publish.result }}**
+          - Deploy: **${{ needs.deploy.result }}**
+          - Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MESSAGE
+          )
+          gh issue comment 17 \
+            --repo "$GITHUB_REPOSITORY" \
+            --body "$body"
+
+      - name: Send Telegram deployment result
         shell: bash
         run: |
           if [[ -z "$TELEGRAM_TOKEN" || -z "$TELEGRAM_CHAT_ID" ]]; then
