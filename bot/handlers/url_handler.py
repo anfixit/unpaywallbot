@@ -125,9 +125,13 @@ async def process_url_message(
     )
     header = '\n'.join(header_parts)
 
-    publisher = _get_telegraph_publisher()
+    publisher = (
+        _get_telegraph_publisher()
+        if settings.telegraph_enabled
+        else None
+    )
     if (
-        publisher
+        publisher is not None
         and publisher.should_use_telegraph(
             article.content,
         )
@@ -146,7 +150,7 @@ async def process_url_message(
             await message.answer(
                 f'{header}\n\n'
                 f'📖 <a href="{safe_telegraph_url}">'
-                'Открыть полный текст</a>',
+                'Открыть извлечённый текст</a>',
                 parse_mode='HTML',
                 disable_web_page_preview=False,
             )
