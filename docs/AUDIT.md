@@ -2,64 +2,64 @@
 
 **Repository:** `anfixit/unpaywallbot`  
 **Audit date:** 2026-07-25  
-**Scope:** application code, outbound networking, Telegram handlers, Redis, authentication helpers, logging, Docker, GitHub Actions, secrets handling, and open-source project health.
+**Scope:** application code, outbound networking, Telegram handlers,
+Redis, optional account storage, logging, Docker, GitHub Actions,
+secrets, dependencies, and open-source project health.
 
 ## Executive summary
 
-The original repository contained a useful extraction pipeline and a substantial unit-test suite, but it was not safe to expose as an unattended public bot or deploy as documented.
+The original repository contained a useful extraction pipeline and a
+substantial unit-test suite, but it was not ready for unattended public
+operation or the documented production deployment.
 
-The highest-risk findings were:
+The most important original risks were:
 
-1. user-controlled URLs could reach private networks, localhost, cloud metadata services, or internal Docker services
+1. arbitrary user URLs could reach private networks and internal services
 2. Redis was published on every host interface
-3. production access was open when the allowlist was empty
-4. rate limiting was vulnerable to concurrent check/increment races
-5. the authenticated browser flow could follow a cross-domain login redirect and did not stop the Playwright driver
-6. access logs stored raw Telegram identifiers by default
-7. CI allowed type and dependency audit failures and mixed pull-request validation with production deployment
-8. project documentation claimed support and deployment behavior that were not guaranteed by the code
+3. an empty production allowlist opened the bot to everyone
+4. rate limiting was not atomic
+5. optional browser credentials could cross a domain boundary
+6. raw Telegram identifiers were logged by default
+7. CI did not block all quality and security failures
+8. Docker and deployment documentation did not match the runtime
 
-The remediation branch addresses the critical and high-priority production risks without expanding access-control circumvention functionality. The default runtime remains focused on publicly delivered HTML and public archive snapshots.
+The current default runtime is restricted to publicly delivered HTML and
+existing public archive snapshots. Optional authenticated browser and
+third-party Telegraph functionality remain disabled unless explicitly
+configured.
 
 ## Audit method
 
 The review combined:
 
-- manual source review of configuration, handlers, middleware, fetchers, extraction, storage, authentication helpers, Docker, and workflows
-- threat modeling for user-controlled URLs and redirects
-- static checks through Ruff, mypy, Bandit, and pip-audit
-- unit and integration tests through pytest
-- reproducible Docker image build
-- GitHub Actions validation on audit pull requests
+- manual review of every application and infrastructure layer
+- threat modeling for untrusted Telegram users and URLs
+- Ruff and strict mypy checks
+- pytest unit and integration tests
+- pip-audit and Bandit
+- reproducible production Docker builds
+- GitHub Actions checks on each remediation pull request
 
-Live extraction against subscriber-only articles is intentionally excluded. Such tests are unstable, may require credentials, and are not appropriate for deterministic CI.
+Live tests against subscriber-only articles are excluded. They are unstable,
+may require credentials, and are unsuitable for deterministic CI.
 
 ## Threat model
 
-The production bot must assume that an untrusted Telegram user can submit arbitrary text and URLs repeatedly.
+An untrusted user may submit arbitrary text and URLs repeatedly. Protected
+assets include the host, Docker network, cloud metadata endpoints, Telegram
+and publisher credentials, Redis data, GitHub secrets, and user privacy.
 
-Protected assets include:
+Primary attack and failure classes considered:
 
-- the host operating system
-- Docker services and networks
-- cloud metadata endpoints
-- Telegram bot credentials
-- publisher account credentials in optional research environments
-- Redis data and rate-limit state
-- GitHub Actions production secrets
-- user identifiers and access logs
-
-Primary adversarial actions considered:
-
-- SSRF, redirect abuse, and DNS time-of-check/time-of-use risks
-- redirecting a safe URL to a private address
-- resource exhaustion through large responses or long extraction chains
+- SSRF, redirects, private addresses, and DNS resolution changes
+- response decompression and memory exhaustion
 - rate-limit races
-- credential exfiltration through login redirects
-- secret exposure in CI logs or third-party actions
+- browser credential exfiltration
+- third-party content disclosure
 - direct Redis access
-- accidental public deployment
-- log-based privacy leakage
+- secret exposure in CI
+- partial or lost writes during shutdown
+- misleading success metadata and operational logs
 
 ## Findings
 
@@ -67,195 +67,182 @@ Primary adversarial actions considered:
 | --- | --- | --- | --- |
 | SEC-01 | Critical | Arbitrary URL and redirect SSRF | Fixed |
 | OPS-01 | Critical | Redis published as `0.0.0.0:6379` | Fixed |
-| AUTH-01 | High | Empty production allowlist opened the bot to everyone | Fixed |
-| CICD-01 | High | CI and deployment shared one workflow and non-blocking security checks | Fixed |
-| CICD-02 | High | Third-party SSH and notification actions received production context | Fixed |
+| AUTH-01 | High | Empty production allowlist opened the bot | Fixed |
+| CICD-01 | High | CI and deploy shared unsafe context | Fixed |
+| CICD-02 | High | Third-party actions received production context | Fixed |
 | RATE-01 | High | Rate-limit check and increment were not atomic | Fixed |
-| HEAD-01 | High | Cross-domain login redirect could receive credentials | Fixed |
+| HEAD-01 | High | Login redirect could cross domains | Fixed |
 | HEAD-02 | High | Playwright driver was not stopped | Fixed |
-| PRIV-01 | High | Raw Telegram identifiers were logged by default | Fixed |
-| DOCKER-01 | High | Browser installation path was not reliable for the non-root runtime user | Fixed |
-| DOC-01 | High | README overclaimed publication support and deployment readiness | Fixed |
+| HEAD-03 | High | Browser requests bypassed URL policy | Fixed with residual DNS TOCTOU limitation |
 | NET-01 | Medium | No overall extraction timeout | Fixed |
-| NET-02 | Medium | Redirect count and declared response size were unbounded | Fixed |
-| NET-03 | High | Chunked or decompressed responses could exceed the memory limit | Fixed |
-| HEAD-03 | High | Playwright requests bypassed the shared outbound URL guard | Fixed with documented residual DNS TOCTOU risk |
-| PRIV-02 | Medium | Long article text was sent to Telegraph by default and HTML was not escaped | Fixed |
+| NET-02 | Medium | Redirect and declared size limits were missing | Fixed |
+| NET-03 | High | Chunked or decoded responses could exceed limits | Fixed |
+| PRIV-01 | High | Raw Telegram identifiers were logged | Fixed |
+| PRIV-02 | Medium | Telegraph transfer was implicit and unescaped | Fixed |
+| PRIV-03 | Medium | Runtime models and rate logs exposed IDs or URLs | Fixed |
+| ARCHIVE-01 | Medium | Archive fallback created third-party snapshots | Fixed |
+| CACHE-01 | Medium | Background cache writes could be lost | Fixed |
+| METHOD-01 | Medium | Fallback results used the proposed method label | Fixed |
 | REDIS-01 | Medium | Cache statistics used blocking Redis `KEYS` | Fixed |
-| UX-01 | Medium | Processing messages could remain after errors | Fixed |
-| UX-02 | Medium | User-controlled metadata could break Telegram Markdown | Fixed |
-| OPS-02 | Medium | No container healthcheck, resource limits, or log rotation | Fixed |
-| OPS-03 | Medium | Redis and bot shared an unnecessarily exposed network | Fixed |
 | LOG-01 | Medium | Concurrent JSONL writes could interleave | Fixed |
-| OSS-01 | Medium | Missing environment template and Docker ignore file | Fixed |
-| OSS-02 | Medium | Missing security, contribution, conduct, support, and audit policies | Fixed |
-| DEP-01 | Medium | Development dependency declarations require cleanup | Deferred |
-| AUTHSTORE-01 | Medium | Optional account storage needed an atomic encrypted-file format and migration design | Fixed for single-process use, disabled by default |
-| INT-01 | Medium | Publication adapters have no stable live compatibility guarantee | Accepted limitation |
-| EXT-01 | Low | Archive and publisher availability are external dependencies | Accepted limitation |
+| AUTHSTORE-01 | Medium | Credential file was weakly derived and non-atomic | Fixed for one writer process |
+| DOCKER-01 | High | Browser files were unavailable to runtime user | Fixed |
+| OPS-02 | Medium | Missing health, resource, and log limits | Fixed |
+| OPS-03 | Medium | Redis network exposure was excessive | Fixed |
+| UX-01 | Medium | Status messages remained after failures | Fixed |
+| UX-02 | Medium | User metadata could break Telegram formatting | Fixed |
+| DOC-01 | High | Documentation overclaimed compatibility | Fixed |
+| OSS-01 | Medium | Missing env and Docker templates | Fixed |
+| OSS-02 | Medium | Missing community and security policies | Fixed |
+| DEP-01 | Medium | Direct dependency manifest contained unused entries | Fixed |
+| INT-01 | Medium | Live publisher compatibility cannot be guaranteed | Accepted limitation |
+| EXT-01 | Low | Archives and publishers are external dependencies | Accepted limitation |
 
 ## Remediation details
 
-### SEC-01: SSRF
+### Outbound network controls
 
-Added `bot/security/url_guard.py` and a shared safe HTTP client.
-
-The control rejects:
+`bot/security/url_guard.py` and the shared HTTP client reject:
 
 - non-HTTP schemes
-- embedded username or password
+- embedded credentials
 - IP literals
-- hostnames without a public domain form
+- hostnames without a public-domain form
 - ports other than 80 and 443
-- DNS results that are loopback, private, link-local, multicast, reserved, or otherwise non-global
+- DNS results that are private, loopback, link-local, multicast,
+  reserved, or otherwise non-global
 
-DNS resolution is repeated for each outbound request. HTTPX request hooks validate redirect targets before they are contacted. This validation reduces common SSRF paths but does not claim cryptographic protection against every DNS time-of-check/time-of-use race because the transport performs its own connection-time resolution.
+Every HTTPX request and redirect is checked. Decoded response bytes are
+streamed and counted, so chunked, compressed, missing, or incorrect
+`Content-Length` headers cannot bypass the configured limit.
 
-Tests cover loopback, RFC1918 networks, IPv6 loopback, and the common `169.254.169.254` metadata address.
+The optional Playwright flow validates the initial URL and browser requests,
+blocks downloads, service workers, WebSockets, and cross-domain non-GET
+requests, and verifies the domain after login. Chromium performs its own
+final socket resolution, so hostile DNS environments still require network
+isolation. The component remains disabled by default.
 
-### NET-03: actual response-size enforcement
+### Archive behavior
 
-The shared HTTP client now streams and counts decoded response bytes. It rejects oversized responses even when `Content-Length` is absent, incorrect, chunked, or smaller than the decompressed body.
+The archive adapter now performs one read-only request for an existing public
+snapshot. It does not submit a URL, create a snapshot, or poll a capture job.
+This removes an unexpected third-party side effect and reduces disclosure of
+user browsing intent.
 
-### HEAD-03: Playwright outbound boundaries
+### Runtime correctness
 
-The optional authenticated browser now validates its initial URL, routes browser HTTP requests through the public-URL guard, blocks cross-domain non-GET requests, blocks service workers, and verifies the domain after login. It remains disabled in the default runtime. Because Chromium owns the final socket resolution, deployments with hostile DNS assumptions should keep this optional component disabled or isolate it at the network layer.
+Cache persistence is awaited before a successful uncached result is returned.
+A cache hit is not written again. This prevents acknowledged results from
+losing their cache entry during shutdown.
 
-### PRIV-02: explicit Telegraph consent
+Each concrete extractor sets its actual method. The orchestrator only applies
+the proposed method when the result has no method metadata. An archive
+fallback can therefore no longer be recorded as crawler or JS-disabled
+extraction.
 
-Publishing long text to Telegraph is disabled by default through `TELEGRAPH_ENABLED=false`. When explicitly enabled, article text and source URLs are HTML-escaped before submission. Documentation states that the content is transferred to a third-party service.
+### Production access and Redis
 
-### REDIS-01: non-blocking cache statistics
-
-Cache statistics now iterate keys with Redis `SCAN` instead of the blocking `KEYS` command.
-
-### OPS-01: Redis exposure
-
-Removed the host port mapping. Redis now:
-
-- uses only an internal Compose network
-- exposes port 6379 only to attached containers
-- persists data through a named volume
-- runs with a read-only root filesystem
-- has no Linux capabilities
-- has a healthcheck and log rotation
-
-### AUTH-01: production access
-
-Production startup now requires one of:
+Production requires either:
 
 - a non-empty `ALLOWED_USERS` JSON array
 - `PUBLIC_ACCESS=true`
 
-Development and testing can still run without an allowlist.
+Rate limits for minute, hour, and day windows are checked and incremented by
+one Redis Lua script. Redis failures deny the request rather than silently
+removing protection.
 
-### RATE-01: atomic limiting
+Redis has no host port, lives on an internal Compose network, persists through
+a named volume, runs read-only without Linux capabilities, and has health and
+log-rotation settings. Cache statistics use incremental `SCAN`.
 
-Minute, hour, and day limits are checked and incremented by one Redis Lua script. The script:
+### Privacy and third-party services
 
-- performs the limit check and increment atomically
-- sets TTL only when a counter is first created
-- returns the blocked time window to the middleware
-- fails closed when Redis is unavailable
+Access logs use a keyed HMAC pseudonym unless
+`LOG_USER_IDENTIFIERS=true`. Log files use directory mode `0700`, file mode
+`0600`, and serialized appends.
 
-### HEAD-01 and HEAD-02: authenticated browser safety
+Rate-limit logs and model representations use the same pseudonym and domain
+metadata. They do not include usernames, raw user IDs, full URLs, article
+titles, or article contents.
 
-The experimental authenticated browser flow now:
+`TELEGRAPH_ENABLED=false` is the default. When explicitly enabled, article
+text and source URLs are escaped before transfer, and the documentation
+states that Telegraph is a third party.
 
-- refuses cross-domain login redirects
-- requires email, password, and submit elements before submitting
-- closes page, context, browser, and Playwright driver
-- remains disabled in the default runtime
+### Optional account storage
 
-### PRIV-01 and LOG-01: access logs
-
-By default, logs contain a keyed HMAC pseudonym rather than raw Telegram identifiers.
-
-Raw identifiers require `LOG_USER_IDENTIFIERS=true`.
-
-Log directories and files are created with modes `0700` and `0600`. Writes are serialized with an asynchronous lock.
-
-### CICD-01 and CICD-02: workflows
-
-Pull-request CI has read-only repository permissions and no production environment.
-
-Blocking jobs cover:
-
-- Ruff
-- mypy
-- pytest and coverage
-- pip-audit
-- Bandit
-- Docker image build
-
-The release workflow:
-
-- runs after successful CI on `main`
-- publishes immutable commit-SHA and `latest` tags to GHCR
-- uses native OpenSSH rather than third-party deployment actions
-- requires a pinned `known_hosts` secret
-- creates the production env file with mode `0600`
-- deploys only when `DEPLOY_ENABLED=true`
-- verifies the container healthcheck after activation
-
-### AUTHSTORE-01: encrypted account storage
-
-The optional storage now:
+The optional credential storage now:
 
 - uses a versioned Fernet envelope
 - derives each new key with PBKDF2-HMAC-SHA256 and a random salt
-- reads legacy fixed-salt Fernet tokens for migration
-- validates every decrypted field before constructing an account
-- fails closed when the key is wrong or the file is damaged
+- reads the legacy fixed-salt format for migration
+- validates every decrypted field
+- fails closed for a wrong key or damaged file
 - writes through a mode `0600` temporary file, `fsync`, and `os.replace`
-- serializes concurrent writes inside one process
-- replaces duplicate records instead of accumulating copies
-- reads passwords through `getpass` or stdin, never command arguments
+- serializes writes within one process
+- replaces duplicate records
+- reads passwords through `getpass` or stdin, never process arguments
 
-The component remains disabled in the default runtime. One storage file must have one writer process. Detailed operation and migration guidance is in `docs/ACCOUNT_STORAGE.md`.
+One file must have one writer process. The default runtime does not enable
+this component. See `docs/ACCOUNT_STORAGE.md`.
 
-## Deferred items
+### CI, image, and deployment
 
-### DEP-01: dependency declaration cleanup
+Pull-request CI has read-only repository permissions and no production
+environment. Blocking checks cover:
 
-`pyproject.toml` still contains direct dependencies that may only be transitive or unused by application code. Removing them requires regenerating and reviewing `uv.lock` in a dedicated dependency pull request.
+- Ruff
+- strict mypy
+- pytest and coverage
+- pip-audit
+- Bandit
+- production Docker build
 
-Recommended follow-up:
+The release workflow runs only after successful CI on `main`, publishes
+immutable commit-SHA and `latest` tags to GHCR, uses native OpenSSH, requires
+pinned `known_hosts`, writes the production environment with mode `0600`,
+and deploys only when `DEPLOY_ENABLED=true`.
 
-1. prove direct imports for each production dependency
-2. remove unused declarations
-3. regenerate `uv.lock` with the pinned Python and uv versions
-4. run the full CI and Docker build before merge
+### Dependencies and open-source package
+
+Unused direct dependency declarations were removed and `uv.lock` was
+regenerated without upgrading resolved package versions. The repository now
+includes bilingual README files, license, changelog, contribution guide,
+security policy, support guide, code of conduct, issue templates, deployment
+documentation, and this audit record.
 
 ## Accepted limitations
 
-- A publication map entry is not a guarantee of extraction.
-- Public archive services may be unavailable or rate limited.
-- HTML extraction can return incomplete or noisy text when site markup changes.
+- A domain map entry is not a guarantee of extraction.
+- Public archives can be unavailable or rate limited.
+- Publisher markup and anti-bot controls change without notice.
+- Extracted HTML can be incomplete or noisy.
 - The bot does not establish legal entitlement to content.
-- No deterministic CI can prove live compatibility with frequently changing publisher sites.
-- Optional account storage supports one writer process per file, not distributed concurrent writers.
+- Deterministic CI cannot prove live publisher compatibility.
+- Playwright has a residual DNS time-of-check/time-of-use limitation.
+- Optional account storage supports one writer process per file.
 
-## Release criteria
+## Production release criteria
 
-The pull request can be considered production-ready when:
+Before enabling deployment:
 
-- all CI jobs pass
-- the Docker image builds from the committed lock file
-- a local or staging bot completes `/start`, `/help`, a public article request, an invalid URL request, and a timeout path
-- production secrets are stored in a protected GitHub Environment
-- the server has a dedicated deployment user and key-only SSH
-- Redis has no host port
-- `DEPLOY_ENABLED` remains disabled until server bootstrap is complete
+- all CI jobs must pass
+- the Docker image must build from committed `uv.lock`
+- staging must verify `/start`, `/help`, one public article, an invalid URL,
+  a timeout, Redis loss, and graceful shutdown
+- production secrets must live in the protected GitHub Environment
+- the server must use a dedicated deploy user and key-only SSH
+- Redis must have no host port
+- `DEPLOY_ENABLED` must remain false until server bootstrap is complete
 
-## Follow-up review
+## Follow-up review triggers
 
-Repeat the security review after any change to:
+Repeat the security review after changes to:
 
-- URL validation or HTTP clients
-- redirect behavior
-- authenticated browser workflows
-- account storage
-- deployment credentials
+- URL validation, redirects, DNS, or HTTP transports
+- Playwright or account workflows
+- Redis and cache lifecycle
+- logging or user identifiers
+- deployment credentials and workflow permissions
 - Docker network topology
 - public access policy
