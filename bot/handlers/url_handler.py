@@ -17,7 +17,11 @@ from bot.models.telegraph_publisher import (
 )
 from bot.services.orchestrator import Orchestrator
 from bot.utils.text_formatter import split_into_chunks
-from bot.utils.url_utils import is_valid_url, normalize_url
+from bot.utils.url_utils import (
+    extract_domain,
+    is_valid_url,
+    normalize_url,
+)
 
 __all__ = ['router']
 
@@ -65,7 +69,6 @@ async def process_url_message(
     message: Message,
     url: str,
     user_id: int,
-    username: str | None,
     state: FSMContext,
 ) -> None:
     """Обработать URL и отправить результат."""
@@ -73,6 +76,7 @@ async def process_url_message(
     status_msg = await message.answer(
         '🔍 Анализирую статью...',
     )
+    domain = extract_domain(url)
 
     try:
         async with asyncio.timeout(
@@ -81,18 +85,23 @@ async def process_url_message(
             request = await _get_orchestrator().process_url(
                 url=url,
                 user_id=user_id,
-                username=username,
                 skip_cache=False,
             )
     except TimeoutError:
-        logger.warning('Таймаут обработки URL: %s', url)
+        logger.warning(
+            'Таймаут обработки домена: %s',
+            domain,
+        )
         await message.answer(
             '⏳ Сайт отвечал слишком долго. '
             'Попробуй повторить позже.',
         )
         return
     except Exception:
-        logger.exception('Ошибка обработки URL: %s', url)
+        logger.exception(
+            'Ошибка обработки домена: %s',
+            domain,
+        )
         await message.answer(
             '❌ Не удалось обработать ссылку '
             'из-за внутренней ошибки.',
@@ -237,6 +246,5 @@ async def handle_message(
         message=message,
         url=normalized_url,
         user_id=user.id,
-        username=user.username,
         state=state,
     )
