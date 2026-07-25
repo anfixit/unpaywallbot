@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 from aiogram import BaseMiddleware
 from aiogram.types import (
@@ -103,20 +103,24 @@ class RateLimiterMiddleware(BaseMiddleware):
     async def _consume(self, user_id: int) -> int:
         """Return blocked window number or zero."""
         client = get_redis_client().client
-        result = await client.eval(
-            _RATE_LIMIT_SCRIPT,
-            3,
-            f'rate:minute:{user_id}',
-            f'rate:hour:{user_id}',
-            f'rate:day:{user_id}',
-            self.rate_per_minute,
-            self.rate_per_hour,
-            self.rate_per_day,
-            _TTL_MINUTE,
-            _TTL_HOUR,
-            _TTL_DAY,
+        operation = cast(
+            Awaitable[object],
+            client.eval(
+                _RATE_LIMIT_SCRIPT,
+                3,
+                f'rate:minute:{user_id}',
+                f'rate:hour:{user_id}',
+                f'rate:day:{user_id}',
+                self.rate_per_minute,
+                self.rate_per_hour,
+                self.rate_per_day,
+                _TTL_MINUTE,
+                _TTL_HOUR,
+                _TTL_DAY,
+            ),
         )
-        return int(result)
+        result = await operation
+        return int(cast(int | str, result))
 
     @staticmethod
     async def _reply(

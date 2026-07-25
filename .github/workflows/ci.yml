@@ -15,8 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PYTHON_VERSION: "3.12"
-  UV_VERSION: "0.11.32"
+  PYTHON_VERSION: '3.12'
+  UV_VERSION: '0.11.32'
 
 jobs:
   quality:
@@ -35,7 +35,7 @@ jobs:
         run: python -m pip install "uv==${UV_VERSION}"
 
       - name: Install dependencies
-        run: uv sync --locked --all-extras
+        run: uv sync --locked
 
       - name: Ruff
         id: ruff
@@ -74,8 +74,8 @@ jobs:
 
       - name: Enforce quality gates
         run: |
-          test "${{ steps.ruff.outputs.status }}" = "0"
-          test "${{ steps.mypy.outputs.status }}" = "0"
+          test "${{ steps.ruff.outputs.status }}" = '0'
+          test "${{ steps.mypy.outputs.status }}" = '0'
 
   test:
     name: Tests
@@ -91,12 +91,12 @@ jobs:
           --health-timeout 3s
           --health-retries 5
     env:
-      BOT_TOKEN: "123456789:AABBCCDDEEFFaabbccddeeff-1234567890"
-      ENCRYPTION_KEY: "test-encryption-key-at-least-32-characters"
-      REDIS_URL: "redis://localhost:6379/0"
-      ALLOWED_USERS: "[]"
-      PUBLIC_ACCESS: "true"
-      ENV: "testing"
+      BOT_TOKEN: '123456789:AABBCCDDEEFFaabbccddeeff-1234567890'
+      ENCRYPTION_KEY: 'test-encryption-key-at-least-32-characters'
+      REDIS_URL: 'redis://localhost:6379/0'
+      ALLOWED_USERS: '[]'
+      PUBLIC_ACCESS: 'true'
+      ENV: 'testing'
     steps:
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -110,7 +110,7 @@ jobs:
         run: python -m pip install "uv==${UV_VERSION}"
 
       - name: Install dependencies
-        run: uv sync --locked --all-extras
+        run: uv sync --locked
 
       - name: Run test suite
         run: uv run pytest --tb=short -q
@@ -170,8 +170,8 @@ jobs:
 
       - name: Enforce security gates
         run: |
-          test "${{ steps.audit.outputs.status }}" = "0"
-          test "${{ steps.bandit.outputs.status }}" = "0"
+          test "${{ steps.audit.outputs.status }}" = '0'
+          test "${{ steps.bandit.outputs.status }}" = '0'
 
   docker:
     name: Docker build
@@ -187,3 +187,39 @@ jobs:
           --build-arg UV_VERSION=${UV_VERSION}
           --tag unpaywallbot:${{ github.sha }}
           .
+
+  notify:
+    name: Telegram notification
+    if: always()
+    needs: [quality, test, security, docker]
+    runs-on: ubuntu-latest
+    env:
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_NOTIFICATION_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_NOTIFICATION_CHAT_ID }}
+    steps:
+      - name: Send workflow result
+        shell: bash
+        run: |
+          if [[ -z "$TELEGRAM_TOKEN" || -z "$TELEGRAM_CHAT_ID" ]]; then
+            echo 'Telegram notification secrets are not available.'
+            exit 0
+          fi
+
+          text=$(cat <<MESSAGE
+          GitHub Actions: ${{ github.repository }}
+          Workflow: ${{ github.workflow }}
+          Ref: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+          Lint and types: ${{ needs.quality.result }}
+          Tests: ${{ needs.test.result }}
+          Security: ${{ needs.security.result }}
+          Docker: ${{ needs.docker.result }}
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MESSAGE
+          )
+
+          curl --fail --silent --show-error \
+            --request POST \
+            --url "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${text}"

@@ -6,10 +6,12 @@ for explicitly configured research environments with owned accounts.
 
 import asyncio
 import logging
+from typing import cast
 
 from playwright.async_api import (
     Page,
     Playwright,
+    SetCookieParam,
     async_playwright,
 )
 from playwright.async_api import (
@@ -148,7 +150,11 @@ async def fetch_via_headless_auth(
 
         html = await page.content()
 
-        account.session_cookies = await context.cookies()
+        cookies = await context.cookies()
+        account.session_cookies = [
+            cast(SetCookieParam, cookie)
+            for cookie in cookies
+        ]
         await account_manager.save_account(account)
 
         return extractor.extract(html, norm_url)

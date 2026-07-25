@@ -7,7 +7,7 @@
 
 import base64
 import json
-from typing import Any
+from typing import Any, cast
 
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
@@ -98,9 +98,12 @@ class Encryptor:
             decrypted = self.fernet.decrypt(
                 encrypted_data.encode('utf-8'),
             )
-            return json.loads(
+            payload = json.loads(
                 decrypted.decode('utf-8'),
             )
+            if not isinstance(payload, dict):
+                return None
+            return cast(dict[str, Any], payload)
         except InvalidToken:
             return None
         except json.JSONDecodeError:
@@ -108,7 +111,7 @@ class Encryptor:
 
     def encrypt_cookies(
         self,
-        cookies: list[dict],
+        cookies: list[dict[str, Any]],
     ) -> str:
         """Зашифровать cookies.
 
@@ -123,7 +126,7 @@ class Encryptor:
     def decrypt_cookies(
         self,
         encrypted: str,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Расшифровать cookies.
 
         Args:
@@ -133,9 +136,18 @@ class Encryptor:
             Список cookies или пустой список.
         """
         data = self.decrypt(encrypted)
-        if data and 'cookies' in data:
-            return data['cookies']
-        return []
+        if not data:
+            return []
+
+        raw_cookies = data.get('cookies')
+        if not isinstance(raw_cookies, list):
+            return []
+
+        return [
+            cast(dict[str, Any], cookie)
+            for cookie in raw_cookies
+            if isinstance(cookie, dict)
+        ]
 
 
 # Синглтон для использования во всём приложении

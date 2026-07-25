@@ -30,7 +30,7 @@ _BACKUP_COUNT = 30  # храним месяц логов
 # Инициализируется лениво при первом вызове
 # setup_logger() — не при импорте (§21.5).
 _listener: QueueListener | None = None
-_queue: Queue | None = None
+_queue: Queue[logging.LogRecord] | None = None
 _initialized = False
 
 
@@ -67,7 +67,8 @@ def _init_queue_logging() -> None:
     if _initialized:
         return
 
-    _queue = Queue(-1)
+    log_queue: Queue[logging.LogRecord] = Queue(-1)
+    _queue = log_queue
     log_level = _get_log_level()
     log_dir = _get_log_dir()
 
@@ -92,7 +93,7 @@ def _init_queue_logging() -> None:
     file_handler.setLevel(log_level)
 
     _listener = QueueListener(
-        _queue,
+        log_queue,
         console,
         file_handler,
         respect_handler_level=True,
@@ -123,6 +124,10 @@ def setup_logger(name: str) -> logging.Logger:
 
     log_level = _get_log_level()
     logger.setLevel(log_level)
+
+    if _queue is None:
+        msg = 'Очередь логирования не инициализирована'
+        raise RuntimeError(msg)
 
     queue_handler = QueueHandler(_queue)
     logger.addHandler(queue_handler)

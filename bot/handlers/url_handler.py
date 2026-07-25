@@ -11,6 +11,11 @@ from aiogram.types import Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import settings
+from bot.models.telegraph_publisher import (
+    TelegraphPublisher,
+    get_telegraph_publisher,
+)
+from bot.services.orchestrator import Orchestrator
 from bot.utils.text_formatter import split_into_chunks
 from bot.utils.url_utils import is_valid_url, normalize_url
 
@@ -19,29 +24,21 @@ __all__ = ['router']
 logger = logging.getLogger(__name__)
 router = Router()
 
-_orchestrator = None
+_orchestrator: Orchestrator | None = None
 _URL_PATTERN = re.compile(r'https?://[^\s]+')
 _TRAILING_PUNCTUATION = '.,;:!?)]}'
 
 
-def _get_orchestrator():
+def _get_orchestrator() -> Orchestrator:
     """Получить или создать Orchestrator."""
     global _orchestrator  # noqa: PLW0603
     if _orchestrator is None:
-        from bot.services.orchestrator import Orchestrator
-
         _orchestrator = Orchestrator()
     return _orchestrator
 
 
-def _get_telegraph_publisher():
-    """Получить optional Telegraph publisher."""
-    try:
-        from bot.services.telegraph_publisher import (
-            get_telegraph_publisher,
-        )
-    except (ImportError, ModuleNotFoundError):
-        return None
+def _get_telegraph_publisher() -> TelegraphPublisher:
+    """Получить издатель Telegraph."""
     return get_telegraph_publisher()
 
 

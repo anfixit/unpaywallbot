@@ -50,10 +50,20 @@ async def test_googlebot_spoof_retry_on_403() -> None:
     mock_response_200.text = '<html><body>Content</body></html>'
 
     mock_client = AsyncMock(spec=httpx.AsyncClient)
-    mock_client.get = AsyncMock(side_effect=[mock_response_403, mock_response_200])
+    mock_client.get = AsyncMock(
+        side_effect=[
+            mock_response_403,
+            mock_response_200,
+        ],
+    )
 
     mock_extractor = Mock()
-    mock_extractor.extract = Mock(return_value=Article(url='https://test.com', content='Content'))
+    mock_extractor.extract = Mock(
+        return_value=Article(
+            url='https://test.com',
+            content='Content',
+        ),
+    )
 
     result = await fetch_via_googlebot_spoof(
         'https://test.com',

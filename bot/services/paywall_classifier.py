@@ -7,7 +7,7 @@
 import asyncio
 import logging
 from pathlib import Path
-from typing import Final
+from typing import Final, TypedDict, cast
 
 import yaml
 
@@ -18,6 +18,20 @@ from bot.utils.url_utils import extract_domain
 __all__ = ['PaywallClassifier']
 
 logger = logging.getLogger(__name__)
+
+
+
+class PaywallConfig(TypedDict, total=False):
+    """Типизированная запись из paywall_map.yaml."""
+
+    type: str
+    method: str
+    platform: str
+    requires_auth: bool
+    requires_headless: bool
+    priority: int
+    note: str
+
 
 CONFIG_PATH: Final[Path] = (
     Path(__file__).parent.parent.parent
@@ -47,7 +61,7 @@ class PaywallClassifier:
             yaml.YAMLError: Некорректный YAML.
         """
         self.config_path = config_path
-        self._domain_map: dict[str, dict] = {}
+        self._domain_map: dict[str, PaywallConfig] = {}
         self._load_config()
 
     def _load_config(self) -> None:
@@ -72,7 +86,17 @@ class PaywallClassifier:
             )
             raise ValueError(msg)
 
-        self._domain_map = raw_config
+        domain_map: dict[str, PaywallConfig] = {}
+        for domain, config in raw_config.items():
+            if not isinstance(domain, str):
+                msg = 'Ключ домена должен быть строкой'
+                raise ValueError(msg)
+            if not isinstance(config, dict):
+                msg = f'Настройки {domain} должны быть словарём'
+                raise ValueError(msg)
+            domain_map[domain] = cast(PaywallConfig, config)
+
+        self._domain_map = domain_map
         logger.info(
             'Загружено %d доменов из конфига',
             len(self._domain_map),
@@ -81,7 +105,7 @@ class PaywallClassifier:
     def _match_domain(
         self,
         domain: str,
-    ) -> tuple[str, dict] | None:
+    ) -> tuple[str, PaywallConfig] | None:
         """Найти запись по домену (с поддоменами).
 
         Args:

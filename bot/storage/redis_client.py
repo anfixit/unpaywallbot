@@ -80,9 +80,7 @@ class RedisClient:
             except RedisConnectionError as exc:
                 last_error = exc
                 if attempt < self.max_retries - 1:
-                    wait = (
-                        self.retry_backoff ** attempt
-                    )
+                    wait = self.retry_backoff ** attempt
                     logger.warning(
                         'Redis попытка %d/%d не '
                         'удалась, повтор через %ds',
@@ -141,15 +139,13 @@ class RedisClient:
         await self.close()
 
 
-# --- Lazy singleton (§21.5) ---
-
 _redis_client: RedisClient | None = None
 
 
 def get_redis_client() -> RedisClient:
     """Получить или создать синглтон RedisClient.
 
-    Ленивая инициализация — settings читается
+    Ленивая инициализация означает, что settings читается
     только при первом вызове, не при импорте.
 
     Returns:

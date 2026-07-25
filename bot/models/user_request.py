@@ -96,13 +96,13 @@ class UserRequest:
             self.error_message = str(error)
             self.error_type = error.__class__.__name__
 
-    def to_log_dict(self) -> dict:
+    def to_log_dict(self) -> dict[str, object]:
         """Подготовить словарь для JSON-логирования.
 
         Используется в access_log.py для
         структурированных логов.
         """
-        base: dict = {
+        base: dict[str, object] = {
             'user_id': self.user_id,
             'username': self.username,
             'url': (

@@ -8,6 +8,7 @@
 import json
 import logging
 from datetime import UTC, datetime
+from typing import cast
 
 from redis.exceptions import RedisError
 
@@ -58,7 +59,10 @@ async def get_cached_article(
         return None
 
     try:
-        article_dict = json.loads(data)
+        payload = json.loads(data)
+        if not isinstance(payload, dict):
+            return None
+        article_dict = cast(dict[str, object], payload)
         _restore_datetime(article_dict)
         return Article(**article_dict)
     except (
@@ -76,7 +80,7 @@ async def get_cached_article(
 
 
 def _restore_datetime(
-    article_dict: dict,
+    article_dict: dict[str, object],
 ) -> None:
     """Конвертировать ISO-строки в datetime.
 
@@ -84,7 +88,7 @@ def _restore_datetime(
     """
     for field in ('extracted_at', 'published_at'):
         raw = article_dict.get(field)
-        if not raw:
+        if not isinstance(raw, str) or not raw:
             continue
         dt = datetime.fromisoformat(raw)
         if dt.tzinfo is None:
@@ -142,7 +146,7 @@ async def save_article_to_cache(
 
 def _serialize_article(
     article: Article,
-) -> dict:
+) -> dict[str, object]:
     """Конвертировать Article в dict для JSON."""
     pub_at = article.published_at
     return {

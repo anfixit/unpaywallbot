@@ -122,4 +122,5 @@ class Settings(BaseSettings):
         return self.env == 'production'
 
 
-settings = Settings()
+# Pydantic Settings supplies required values from the environment.
+settings = Settings()  # type: ignore[call-arg]
