@@ -308,3 +308,114 @@ async def test_process_url_publishes_request_context(
         )
 
     assert get_current_request() is request
+
+
+@pytest.mark.asyncio
+async def test_article_goes_to_telegraph_not_chat(
+    mock_message,
+) -> None:
+    """Статья публикуется на telegra.ph, а не текстом."""
+    status_message = Mock(spec=Message)
+    status_message.delete = AsyncMock()
+    sent: list[str] = []
+
+    async def answer(text, **kwargs):
+        sent.append(text)
+        return status_message if len(sent) == 1 else None
+
+    mock_message.answer = AsyncMock(side_effect=answer)
+
+    request = UserRequest(
+        user_id=123,
+        original_url='https://zeit.de/article',
+    )
+    request.complete(
+        Article(
+            url='https://zeit.de/article',
+            title='Статья',
+            content='Короткий текст статьи.',
+        ),
+    )
+    orchestrator = AsyncMock()
+    orchestrator.process_url = AsyncMock(return_value=request)
+    publisher = Mock()
+    publisher.should_use_telegraph = Mock(return_value=True)
+    publisher.publish = AsyncMock(
+        return_value='https://telegra.ph/Test-01-01',
+    )
+
+    with (
+        patch.object(
+            url_handler.settings, 'telegraph_enabled', True,
+        ),
+        patch(
+            'bot.handlers.url_handler._get_orchestrator',
+            return_value=orchestrator,
+        ),
+        patch(
+            'bot.handlers.url_handler._get_telegraph_publisher',
+            return_value=publisher,
+        ),
+    ):
+        await url_handler.process_url_message(
+            message=mock_message,
+            url='https://zeit.de/article',
+            user_id=123,
+            state=AsyncMock(),
+        )
+
+    publisher.publish.assert_awaited_once()
+    result = sent[-1]
+    assert 'telegra.ph/Test-01-01' in result
+    # Текст статьи в чат не уходит.
+    assert 'Короткий текст статьи.' not in result
+
+
+@pytest.mark.asyncio
+async def test_partial_article_is_labelled(
+    mock_message,
+) -> None:
+    """Фрагмент помечается предупреждением."""
+    status_message = Mock(spec=Message)
+    status_message.delete = AsyncMock()
+    sent: list[str] = []
+
+    async def answer(text, **kwargs):
+        sent.append(text)
+        return status_message if len(sent) == 1 else None
+
+    mock_message.answer = AsyncMock(side_effect=answer)
+
+    request = UserRequest(
+        user_id=123,
+        original_url='https://welt.de/plus/a',
+    )
+    article = Article(
+        url='https://welt.de/plus/a',
+        title='Плюсовая статья',
+        content='Анонс.',
+    )
+    article.is_partial = True
+    request.complete(article)
+    orchestrator = AsyncMock()
+    orchestrator.process_url = AsyncMock(return_value=request)
+
+    with (
+        patch.object(
+            url_handler.settings, 'telegraph_enabled', False,
+        ),
+        patch(
+            'bot.handlers.url_handler._get_orchestrator',
+            return_value=orchestrator,
+        ),
+    ):
+        await url_handler.process_url_message(
+            message=mock_message,
+            url='https://welt.de/plus/a',
+            user_id=123,
+            state=AsyncMock(),
+        )
+
+    header = sent[1]
+    assert 'только публичный фрагмент' in header
+    assert 'без подписки' in header

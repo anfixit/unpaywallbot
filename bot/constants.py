@@ -17,6 +17,7 @@ __all__ = [
     'MAX_REDIRECTS',
     'MAX_RETRY_COUNT',
     'MAX_URL_LENGTH',
+    'PARTIAL_CONTENT_THRESHOLD',
     'PBKDF2_ITERATIONS',
     'PBKDF2_SALT_BYTES',
     'PaywallType',
@@ -87,6 +88,10 @@ CACHE_TTL_SHORT: Final = 300
 CACHE_TTL_LONG: Final = 86_400
 
 MAX_MESSAGE_LENGTH: Final = 4096
+
+# Текст короче этого порога на домене с известным
+# paywall — почти всегда анонс, а не статья целиком.
+PARTIAL_CONTENT_THRESHOLD: Final = 1200
 
 ALLOWED_IMAGE_TYPES: Final = frozenset({
     'image/jpeg',

@@ -66,11 +66,22 @@ async def _buffer_limited_response(
 def create_safe_http_client(
     *,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    connect_timeout_seconds: float | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> httpx.AsyncClient:
-    """Создать клиент с SSRF-защитой."""
+    """Создать клиент с SSRF-защитой.
+
+    connect_timeout_seconds отделяет ожидание
+    установки соединения от общего таймаута:
+    недоступный хост тогда отваливается быстро,
+    не расходуя бюджет всего запроса.
+    """
+    timeout = httpx.Timeout(
+        timeout_seconds,
+        connect=connect_timeout_seconds or timeout_seconds,
+    )
     return httpx.AsyncClient(
-        timeout=httpx.Timeout(timeout_seconds),
+        timeout=timeout,
         follow_redirects=True,
         max_redirects=MAX_REDIRECTS,
         limits=httpx.Limits(

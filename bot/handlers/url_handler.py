@@ -141,6 +141,13 @@ async def process_url_message(
     header_parts.append(
         f'🔗 <a href="{source_url}">Источник</a>',
     )
+    if article.is_partial:
+        # Молча отдать анонс вместо статьи — значит
+        # ввести читателя в заблуждение.
+        header_parts.append(
+            '⚠️ Доступен только публичный фрагмент: '
+            'издание не отдаёт полный текст без подписки.',
+        )
     header = '\n'.join(header_parts)
 
     publisher = (

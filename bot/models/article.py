@@ -22,6 +22,8 @@ class Article:
     )
     paywall_type: str | None = None
     extraction_method: str | None = None
+    is_partial: bool = False
+    """Извлечён только публичный фрагмент, не весь текст."""
 
     @property
     def content_preview(self) -> str:

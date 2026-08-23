@@ -84,6 +84,7 @@ def _deserialize_article(payload: object) -> Article | None:
         extraction_method=_optional_text(
             payload.get('extraction_method'),
         ),
+        is_partial=bool(payload.get('is_partial', False)),
     )
 
 
@@ -172,6 +173,7 @@ def _serialize_article(article: Article) -> dict[str, object]:
         'extracted_at': article.extracted_at.isoformat(),
         'paywall_type': article.paywall_type,
         'extraction_method': article.extraction_method,
+        'is_partial': article.is_partial,
     }
 
 

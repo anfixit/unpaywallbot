@@ -131,7 +131,7 @@ Redis is available only on the private Compose network. The bot container runs a
 | `LOG_LEVEL` | no | `INFO` | Application log level |
 | `REQUEST_TIMEOUT_SECONDS` | no | `90` | Overall processing timeout, from 10 to 300 seconds |
 | `LOG_USER_IDENTIFIERS` | no | `false` | Store raw Telegram identifiers in access logs |
-| `TELEGRAPH_ENABLED` | no | `false` | Publish long extracted text to the third-party Telegraph service |
+| `TELEGRAPH_ENABLED` | no | `false` | Publish extracted text to the third-party Telegraph service |
 
 * Production requires either a non-empty `ALLOWED_USERS` value or `PUBLIC_ACCESS=true`.
 
@@ -139,11 +139,13 @@ Secrets must never be committed. `.env`, `.env.local`, and `.env.production` are
 
 ### Third-party publishing
 
-`TELEGRAPH_ENABLED` is disabled by default. When enabled, long extracted
-text, its title, author, and source URL are sent to the third-party
-Telegraph service. Enable it only when this transfer is appropriate for
-your deployment and users. When it is disabled, long text is split into
-Telegram messages instead.
+`TELEGRAPH_ENABLED` is disabled by default. When enabled, **every**
+extracted article — its text, title, author, and source URL — is sent to
+the third-party Telegraph service, and the reader receives a link instead
+of the text. Telegraph pages are public to anyone holding the link.
+Enable it only when this transfer is appropriate for your deployment and
+users. When it is disabled, or when publication fails, the text is split
+into Telegram messages instead.
 
 ## Publication configuration
 
