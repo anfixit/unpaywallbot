@@ -8,6 +8,8 @@ The format follows Keep a Changelog principles. The project uses semantic versio
 
 ### Added
 
+- optional `ARCHIVE_PROXY_URL` for public-archive requests, with an
+  `archive-proxy` Compose profile and deployment from a `vless://` secret
 - SSRF guard for URLs, redirects, DNS rebinding, private networks, IP literals, credentials, and non-standard ports
 - shared safe HTTP client with redirect and decoded response-size limits
 - production request timeout and controlled error handling
@@ -30,6 +32,10 @@ The format follows Keep a Changelog principles. The project uses semantic versio
   known paywall is reported as a public fragment instead of a full text
 - the archive adapter uses a short connect timeout, so an unreachable
   archive no longer consumes the request budget
+- the archive adapter recognises the anti-bot challenge and pauses for
+  thirty minutes instead of repeating requests it cannot satisfy
+- a reply the bot cannot fill offers the archive lookup link so the reader
+  can open the snapshot in their own browser
 - application logging is configured on the root logger, so every module
   reaches the rotating log file instead of only the entry point
 - noisy third-party loggers are limited to `WARNING`

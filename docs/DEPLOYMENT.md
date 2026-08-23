@@ -211,6 +211,13 @@ Create production environment secrets:
 | `ENCRYPTION_KEY` | Random secret with at least 32 characters |
 | `ALLOWED_USERS` | JSON array such as `[123456789]` |
 | `PUBLIC_ACCESS` | Normally `false` |
+| `TELEGRAPH_ENABLED` | `true` to publish articles to Telegraph |
+| `ARCHIVE_PROXY_VLESS` | Optional `vless://` link for archive access |
+
+`ARCHIVE_PROXY_VLESS` is optional. When set, the workflow builds an Xray
+client configuration from the link, uploads it as `archive-proxy.json`
+with mode `0600`, starts the `archive-proxy` Compose profile, and points
+`ARCHIVE_PROXY_URL` at it. Only archive requests travel through it.
 
 The workflow uses the run's own `GITHUB_TOKEN` both to publish the image and
 to authenticate the server for the pull, then logs the server out of GHCR

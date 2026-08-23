@@ -16,6 +16,7 @@ from bot.models.telegraph_publisher import (
     TelegraphPublisher,
     get_telegraph_publisher,
 )
+from bot.services.methods.archive_relay import archive_lookup_url
 from bot.services.orchestrator import Orchestrator
 from bot.utils.request_context import set_current_request
 from bot.utils.text_formatter import split_into_chunks
@@ -71,6 +72,23 @@ async def _delete_status_message(message: Message) -> None:
         )
 
 
+def _archive_hint(url: str) -> str:
+    """Предложить открыть архивный снимок вручную.
+
+    Архив отвечает автоматике антибот-проверкой, но
+    человеку в браузере страницу отдаёт.
+    """
+    lookup = archive_lookup_url(url)
+    if not lookup:
+        return ''
+    safe = html.escape(lookup, quote=True)
+    return (
+        '\n\n🗄 Можно поискать снимок в публичном архиве '
+        f'и открыть его самостоятельно:\n<a href="{safe}">'
+        'archive.ph</a>'
+    )
+
+
 async def process_url_message(
     message: Message,
     url: str,
@@ -123,7 +141,10 @@ async def process_url_message(
         await message.answer(
             '❌ Не удалось извлечь доступный текст статьи.\n\n'
             'Сайт мог заблокировать запрос, изменить разметку '
-            'или не отдавать содержимое без авторизации.',
+            'или не отдавать содержимое без авторизации.'
+            + _archive_hint(url),
+            parse_mode='HTML',
+            disable_web_page_preview=True,
         )
         return
 
@@ -146,7 +167,8 @@ async def process_url_message(
         # ввести читателя в заблуждение.
         header_parts.append(
             '⚠️ Доступен только публичный фрагмент: '
-            'издание не отдаёт полный текст без подписки.',
+            'издание не отдаёт полный текст без подписки.'
+            + _archive_hint(article.url),
         )
     header = '\n'.join(header_parts)
 

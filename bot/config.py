@@ -72,6 +72,12 @@ class Settings(BaseSettings):
         default=False,
         description='Хранить raw Telegram identifiers в access log',
     )
+    archive_proxy_url: str = Field(
+        default='',
+        description=(
+            'HTTP-прокси только для запросов к архиву'
+        ),
+    )
     telegraph_enabled: bool = Field(
         default=False,
         description=(
