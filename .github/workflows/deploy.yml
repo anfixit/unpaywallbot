@@ -68,6 +68,9 @@ jobs:
   deploy:
     name: Deploy production
     needs: publish
+    # Серверный деплой выключен, пока repository variable
+    # DEPLOY_ENABLED не установлена в 'true'.
+    if: vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -315,6 +318,14 @@ jobs:
           fi
 
           BOT_IMAGE="$image_ref" "${compose_cmd[@]}" ps
+
+          # Каждый релиз оставляет предыдущий образ без тега.
+          # Без очистки они копятся и забивают диск.
+          # Никогда не роняем успешный деплой из-за уборки.
+          "${docker_cmd[@]}" image prune -f --filter 'until=168h' \
+            || echo 'Очистка старых образов пропущена.'
+          "${docker_cmd[@]}" system df || true
+
           "${docker_cmd[@]}" logout ghcr.io >/dev/null 2>&1 || true
           REMOTE
 
@@ -327,30 +338,18 @@ jobs:
       TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_NOTIFICATION_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_NOTIFICATION_CHAT_ID }}
     steps:
-      - name: Record deployment result in issue
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -Eeuo pipefail
-          body=$(cat <<MESSAGE
-          ### Deployment run ${{ github.run_number }}
-
-          - Commit: \`${SOURCE_SHA}\`
-          - Publish: **${{ needs.publish.result }}**
-          - Deploy: **${{ needs.deploy.result }}**
-          - Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          MESSAGE
-          )
-          gh issue comment 17 \
-            --repo "$GITHUB_REPOSITORY" \
-            --body "$body"
-
+      # Уведомление отправляется первым: комментарий в issue
+      # не должен помешать обязательному сообщению в Telegram.
       - name: Send Telegram deployment result
         shell: bash
         run: |
+          set -Eeuo pipefail
           if [[ -z "$TELEGRAM_TOKEN" || -z "$TELEGRAM_CHAT_ID" ]]; then
-            echo 'Telegram notification secrets are not available.'
-            exit 0
+            msg='Repository secrets TELEGRAM_NOTIFICATION_TOKEN'
+            msg="$msg and TELEGRAM_NOTIFICATION_CHAT_ID are"
+            msg="$msg required for deployment notifications."
+            echo "::error::${msg}"
+            exit 1
           fi
 
           text=$(cat <<MESSAGE
@@ -368,3 +367,23 @@ jobs:
             --url "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
             --data-urlencode "text=${text}"
+
+      - name: Record deployment result in issue
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          body=$(cat <<MESSAGE
+          ### Deployment run ${{ github.run_number }}
+
+          - Commit: \`${SOURCE_SHA}\`
+          - Publish: **${{ needs.publish.result }}**
+          - Deploy: **${{ needs.deploy.result }}**
+          - Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MESSAGE
+          )
+          gh issue comment 17 \
+            --repo "$GITHUB_REPOSITORY" \
+            --body "$body"
