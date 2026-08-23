@@ -55,9 +55,9 @@ services:
     profiles: [archive-proxy]
     restart: unless-stopped
     command: ["-c", "/etc/xray/config.json"]
-    # Конфиг лежит с правами 0600 и владельцем deploy-
-    # пользователя, а образ работает не от root.
-    user: "0:0"
+    # Образ distroless и работает от uid 65532. Конфиг
+    # деплой кладёт читаемым, а каталог сужает до 0750,
+    # чтобы учётные данные узла не разошлись по хосту.
     volumes:
       - ./archive-proxy.json:/etc/xray/config.json:ro
     expose:
