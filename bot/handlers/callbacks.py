@@ -62,3 +62,30 @@ async def cancel_action(
             '❌ Действие отменено. Отправь новую ссылку.',
         )
     await callback.answer()
+
+
+@router.callback_query(F.data == 'retry_archives')
+async def retry_archives(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    """Повторить безопасную автоматическую проверку архивов."""
+    message = _callback_message(callback)
+    data = await state.get_data()
+    url = data.get('url')
+
+    if message is None or not isinstance(url, str):
+        if message is not None:
+            await message.answer(
+                '❌ Сессия устарела. Отправь ссылку ещё раз.',
+            )
+        await callback.answer()
+        return
+
+    await callback.answer('Повторяю автоматический поиск…')
+    await process_url_message(
+        message=message,
+        url=url,
+        user_id=callback.from_user.id,
+        state=state,
+    )

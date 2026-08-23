@@ -15,7 +15,9 @@ graph TD
         Orchestrator -->|Fallback| Archive[archive_relay.py]
 
         JS & Google & German & Headless -->|HTML| Extractor[Content Extractor]
-        Archive -->|archive.ph| Extractor
+        Archive -->|read-only| ArchiveToday[archive.ph]
+        Archive -->|automatic fallback| Wayback[Wayback Machine]
+        ArchiveToday & Wayback -->|HTML| Extractor
     end
 
     Extractor -->|Article| Cache

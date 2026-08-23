@@ -7,7 +7,7 @@ import re
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import settings
@@ -16,7 +16,7 @@ from bot.models.telegraph_publisher import (
     TelegraphPublisher,
     get_telegraph_publisher,
 )
-from bot.services.methods.archive_relay import archive_lookup_url
+from bot.services.methods.archive_relay import wayback_lookup_url
 from bot.services.orchestrator import Orchestrator
 from bot.utils.request_context import set_current_request
 from bot.utils.text_formatter import split_into_chunks
@@ -73,20 +73,32 @@ async def _delete_status_message(message: Message) -> None:
 
 
 def _archive_hint(url: str) -> str:
-    """Предложить открыть архивный снимок вручную.
-
-    Архив отвечает автоматике антибот-проверкой, но
-    человеку в браузере страницу отдаёт.
-    """
-    lookup = archive_lookup_url(url)
+    """Предложить безопасный ручной поиск в Wayback."""
+    lookup = wayback_lookup_url(url)
     if not lookup:
         return ''
     safe = html.escape(lookup, quote=True)
     return (
-        '\n\n🗄 Можно поискать снимок в публичном архиве '
-        f'и открыть его самостоятельно:\n<a href="{safe}">'
-        'archive.ph</a>'
+        '\n\n🗄 Можно проверить снимки вручную в '
+        f'<a href="{safe}">Wayback Machine</a>.'
     )
+
+
+def _archive_actions(url: str) -> InlineKeyboardMarkup:
+    """Build safe manual archive and retry actions."""
+    builder = InlineKeyboardBuilder()
+    lookup = wayback_lookup_url(url)
+    if lookup:
+        builder.button(
+            text='🗄 Открыть Wayback Machine',
+            url=lookup,
+        )
+    builder.button(
+        text='🔄 Повторить автоматический поиск',
+        callback_data='retry_archives',
+    )
+    builder.adjust(1)
+    return builder.as_markup()
 
 
 async def process_url_message(
@@ -96,7 +108,9 @@ async def process_url_message(
     state: FSMContext,
 ) -> None:
     """Обработать URL и отправить результат."""
-    await state.clear()
+    # URL остаётся в Redis FSM до успешного результата,
+    # чтобы пользователь мог продолжить без повторной отправки ссылки.
+    await state.set_data({'url': url})
     status_msg = await message.answer(
         '🔍 Анализирую статью...',
     )
@@ -145,10 +159,12 @@ async def process_url_message(
             + _archive_hint(url),
             parse_mode='HTML',
             disable_web_page_preview=True,
+            reply_markup=_archive_actions(url),
         )
         return
 
     article = request.article
+    await state.clear()
     title = article.title or 'Без заголовка'
     source_url = html.escape(article.url, quote=True)
 

@@ -8,6 +8,10 @@ The format follows Keep a Changelog principles. The project uses semantic versio
 
 ### Added
 
+- automatic read-only Wayback Machine fallback when archive.ph is
+  challenged, blocked, or has no usable snapshot
+- Telegram actions to open Wayback safely or retry the saved request
+  without sending the article URL again
 - optional `ARCHIVE_PROXY_URL` for public-archive requests, with an
   `archive-proxy` Compose profile and deployment from a `vless://` secret
 - SSRF guard for URLs, redirects, DNS rebinding, private networks, IP literals, credentials, and non-standard ports
@@ -34,8 +38,8 @@ The format follows Keep a Changelog principles. The project uses semantic versio
   archive no longer consumes the request budget
 - the archive adapter recognises the anti-bot challenge and pauses for
   thirty minutes instead of repeating requests it cannot satisfy
-- a reply the bot cannot fill offers the archive lookup link so the reader
-  can open the snapshot in their own browser
+- a reply the bot cannot fill offers a Wayback lookup link and keeps the
+  request context for a one-tap retry
 - application logging is configured on the root logger, so every module
   reaches the rotating log file instead of only the entry point
 - noisy third-party loggers are limited to `WARNING`
