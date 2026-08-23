@@ -12,7 +12,11 @@ from bot.services.content_extractor import ContentExtractor
 from bot.services.http_client import create_safe_http_client
 from bot.utils.url_utils import extract_domain, normalize_url
 
-__all__ = ['fetch_via_archive', 'reset_cooldown']
+__all__ = [
+    'archive_lookup_url',
+    'fetch_via_archive',
+    'reset_cooldown',
+]
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +67,20 @@ _WAIT_MARKERS = (
     'Waiting',
     'Just a moment',
 )
+
+
+def archive_lookup_url(url: str) -> str | None:
+    """Ссылка на снимок для открытия человеком.
+
+    Архив показывает автоматике антибот-проверку, но
+    обычному посетителю отдаёт страницу. Поэтому когда
+    бот не смог получить текст, он предлагает открыть
+    снимок самостоятельно.
+    """
+    norm_url = normalize_url(url)
+    if not norm_url:
+        return None
+    return f'{_ARCHIVE_BASE}/newest/{norm_url}'
 
 
 async def fetch_via_archive(

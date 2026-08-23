@@ -419,3 +419,42 @@ async def test_partial_article_is_labelled(
     header = sent[1]
     assert 'только публичный фрагмент' in header
     assert 'без подписки' in header
+
+
+@pytest.mark.asyncio
+async def test_failure_offers_archive_link(
+    mock_message,
+) -> None:
+    """При неудаче бот предлагает открыть архив вручную."""
+    status_message = Mock(spec=Message)
+    status_message.delete = AsyncMock()
+    sent: list[str] = []
+
+    async def answer(text, **kwargs):
+        sent.append(text)
+        return status_message if len(sent) == 1 else None
+
+    mock_message.answer = AsyncMock(side_effect=answer)
+
+    request = UserRequest(
+        user_id=123,
+        original_url='https://welt.de/plus/a',
+    )
+    request.complete(error=RuntimeError('нет текста'))
+    orchestrator = AsyncMock()
+    orchestrator.process_url = AsyncMock(return_value=request)
+
+    with patch(
+        'bot.handlers.url_handler._get_orchestrator',
+        return_value=orchestrator,
+    ):
+        await url_handler.process_url_message(
+            message=mock_message,
+            url='https://welt.de/plus/a',
+            user_id=123,
+            state=AsyncMock(),
+        )
+
+    reply = sent[-1]
+    assert 'archive.ph/newest/' in reply
+    assert 'самостоятельно' in reply

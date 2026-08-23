@@ -34,6 +34,8 @@ The format follows Keep a Changelog principles. The project uses semantic versio
   archive no longer consumes the request budget
 - the archive adapter recognises the anti-bot challenge and pauses for
   thirty minutes instead of repeating requests it cannot satisfy
+- a reply the bot cannot fill offers the archive lookup link so the reader
+  can open the snapshot in their own browser
 - application logging is configured on the root logger, so every module
   reaches the rotating log file instead of only the entry point
 - noisy third-party loggers are limited to `WARNING`
