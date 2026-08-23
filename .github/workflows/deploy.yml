@@ -108,6 +108,18 @@ jobs:
             fi
           done
 
+          # ALLOWED_USERS='[]' — непустая строка, но пустой список.
+          # Бот с такой конфигурацией откажется стартовать, поэтому
+          # проверяем то же условие, что и приложение.
+          if [[ "${PUBLIC_ACCESS:-false}" != 'true' ]]; then
+            allowlist="${ALLOWED_USERS//[[:space:]]/}"
+            if [[ "$allowlist" == '[]' ]]; then
+              echo 'ALLOWED_USERS is an empty list and PUBLIC_ACCESS is not true.' >&2
+              echo 'Production would refuse to start. Set one of them.' >&2
+              exit 1
+            fi
+          fi
+
       - name: Configure SSH
         run: |
           set -Eeuo pipefail
@@ -301,9 +313,12 @@ jobs:
 
           healthy=false
           for _ in $(seq 1 18); do
+            # </dev/null обязателен: без него exec читает stdin,
+            # то есть остаток этого скрипта, и проверка вместе с
+            # хвостом шага молча теряется.
             if BOT_IMAGE="$image_ref" \
               "${compose_cmd[@]}" exec -T bot \
-              python -m bot.healthcheck; then
+              python -m bot.healthcheck </dev/null; then
               healthy=true
               break
             fi
