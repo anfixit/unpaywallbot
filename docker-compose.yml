@@ -4,6 +4,11 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # Точка входа образа сбрасывает привилегии через setpriv,
+    # когда стартует от root, а для этого нужны CAP_SETUID и
+    # CAP_SETGID, снятые ниже через cap_drop. Запускаемся сразу
+    # от redis: сброс привилегий тогда не нужен.
+    user: redis
     command:
       - redis-server
       - --appendonly
