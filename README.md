@@ -162,10 +162,14 @@ is present.
 
 Reaching the archive is not the same as being served by it. Archives
 answer automated clients with an anti-bot challenge, and the project does
-not attempt to solve one. The adapter recognises the challenge, pauses
-for thirty minutes, and reports the article as unavailable. A configured
-proxy therefore makes the archive a possible source, never a guaranteed
-one.
+not attempt to solve one. The adapter recognises an archive.ph challenge,
+pauses requests to that service for thirty minutes, and transparently
+tries the closest HTML snapshot from Wayback Machine instead. If neither
+archive has usable text, Telegram offers a safe Wayback link and a retry
+button while retaining the original request context.
+
+Wayback requests connect directly and never use `ARCHIVE_PROXY_URL`; the
+proxy remains scoped to archive.ph only.
 
 ## Publication configuration
 

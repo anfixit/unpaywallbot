@@ -61,11 +61,13 @@ async def test_archive_wait_page_returns_none() -> None:
     client.get = AsyncMock(return_value=response)
     client.post = AsyncMock()
     extractor = Mock()
+    wayback = _wayback_unavailable_client()
 
     result = await fetch_via_archive(
         'https://example.com/article',
         extractor=extractor,
         client=client,
+        wayback_client=wayback,
     )
 
     assert result is None
@@ -78,10 +80,10 @@ async def test_archive_uses_proxy_when_configured(
     monkeypatch,
 ) -> None:
     """Запросы к архиву идут через настроенный прокси."""
-    captured: dict[str, object] = {}
+    captured: list[dict[str, object]] = []
 
     def fake_client(**kwargs):
-        captured.update(kwargs)
+        captured.append(kwargs)
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(
             side_effect=httpx.ConnectError('stop'),
@@ -106,9 +108,12 @@ async def test_archive_uses_proxy_when_configured(
     )
 
     assert result is None
-    assert captured['proxy'] == 'http://archive-proxy:1080'
+    assert captured[0]['proxy'] == 'http://archive-proxy:1080'
+    # Wayback — независимый безопасный источник и не должен
+    # занимать archive-only прокси.
+    assert captured[1].get('proxy') is None
     # Недоступный архив не должен съедать бюджет запроса.
-    assert captured['connect_timeout_seconds'] <= 10
+    assert captured[0]['connect_timeout_seconds'] <= 10
 
 
 @pytest.mark.asyncio
@@ -162,6 +167,17 @@ def _client_returning(status_code: int, text: str):
     return client
 
 
+def _wayback_unavailable_client():
+    """Клиент Wayback без доступного снимка."""
+    response = Mock()
+    response.status_code = 200
+    response.json.return_value = {'archived_snapshots': {}}
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(return_value=response)
+    client.aclose = AsyncMock()
+    return client
+
+
 @pytest.mark.asyncio
 async def test_rate_limit_starts_cooldown() -> None:
     """429 с капчей включает паузу вместо повторов."""
@@ -171,6 +187,7 @@ async def test_rate_limit_starts_cooldown() -> None:
         'https://example.com/a',
         extractor=Mock(),
         client=client,
+        wayback_client=_wayback_unavailable_client(),
     )
 
     assert result is None
@@ -180,23 +197,28 @@ async def test_rate_limit_starts_cooldown() -> None:
 
 @pytest.mark.asyncio
 async def test_cooldown_skips_further_requests() -> None:
-    """Во время паузы запрос к архиву не уходит вовсе."""
+    """Cooldown archive.ph не блокирует безопасный Wayback."""
     blocked = _client_returning(429, 'CAPTCHA')
+    first_wayback = _wayback_unavailable_client()
     await archive_relay.fetch_via_archive(
         'https://example.com/a',
         extractor=Mock(),
         client=blocked,
+        wayback_client=first_wayback,
     )
 
     second = _client_returning(200, '<html>snapshot</html>')
+    second_wayback = _wayback_unavailable_client()
     result = await archive_relay.fetch_via_archive(
         'https://example.com/b',
         extractor=Mock(),
         client=second,
+        wayback_client=second_wayback,
     )
 
     assert result is None
     second.get.assert_not_awaited()
+    second_wayback.get.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -210,7 +232,81 @@ async def test_captcha_page_with_200_also_counts() -> None:
         'https://example.com/a',
         extractor=Mock(),
         client=client,
+        wayback_client=_wayback_unavailable_client(),
     )
 
     assert result is None
     assert archive_relay._cooldown_remaining() > 0
+
+
+@pytest.mark.asyncio
+async def test_captcha_falls_back_to_wayback() -> None:
+    """CAPTCHA archive.ph незаметно переключает на Wayback."""
+    archive_client = _client_returning(429, 'CAPTCHA')
+    availability = Mock()
+    availability.status_code = 200
+    availability.json.return_value = {
+        'archived_snapshots': {
+            'closest': {
+                'available': True,
+                'status': '200',
+                'timestamp': '20260823040340',
+            },
+        },
+    }
+    snapshot = Mock()
+    snapshot.status_code = 200
+    snapshot.text = '<html>archived article</html>'
+    snapshot.headers = {'content-type': 'text/html; charset=utf-8'}
+    wayback_client = AsyncMock(spec=httpx.AsyncClient)
+    wayback_client.get = AsyncMock(
+        side_effect=[availability, snapshot],
+    )
+    article = Article(
+        url='https://example.com/a',
+        content='Wayback article text',
+    )
+    extractor = Mock()
+    extractor.extract.return_value = article
+
+    result = await archive_relay.fetch_via_archive(
+        article.url,
+        extractor=extractor,
+        client=archive_client,
+        wayback_client=wayback_client,
+    )
+
+    assert result is article
+    assert result.extraction_method == BypassMethod.ARCHIVE_RELAY
+    assert wayback_client.get.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_wayback_rejects_redirect_to_original_site() -> None:
+    """Replay не должен уводить HTTP-клиент на исходный сайт."""
+    availability = Mock()
+    availability.status_code = 200
+    availability.json.return_value = {
+        'archived_snapshots': {
+            'closest': {
+                'available': True,
+                'status': '200',
+                'timestamp': '20260823040340',
+            },
+        },
+    }
+    redirect = Mock()
+    redirect.status_code = 302
+    redirect.headers = {'location': 'https://example.com/a'}
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(side_effect=[availability, redirect])
+    extractor = Mock()
+
+    result = await archive_relay.fetch_via_wayback(
+        'https://example.com/a',
+        extractor=extractor,
+        client=client,
+    )
+
+    assert result is None
+    extractor.extract.assert_not_called()

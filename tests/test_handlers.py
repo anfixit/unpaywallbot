@@ -142,6 +142,37 @@ async def test_try_anyway_callback(
 
 
 @pytest.mark.asyncio
+async def test_retry_archives_callback(
+    mock_message,
+) -> None:
+    """Повторная проверка продолжает сохранённый запрос."""
+    callback = Mock()
+    callback.message = mock_message
+    callback.from_user = Mock()
+    callback.from_user.id = 123
+    callback.answer = AsyncMock()
+
+    mock_state = AsyncMock()
+    mock_state.get_data = AsyncMock(
+        return_value={'url': 'https://test.com/article'},
+    )
+
+    with patch(
+        'bot.handlers.callbacks.process_url_message',
+        new=AsyncMock(),
+    ) as mock_process:
+        await callbacks.retry_archives(callback, mock_state)
+
+    callback.answer.assert_awaited_once()
+    mock_process.assert_awaited_once_with(
+        message=mock_message,
+        url='https://test.com/article',
+        user_id=123,
+        state=mock_state,
+    )
+
+
+@pytest.mark.asyncio
 async def test_process_url_keeps_telegraph_disabled(
     mock_message,
 ) -> None:
@@ -195,6 +226,7 @@ async def test_process_url_keeps_telegraph_disabled(
         user_id=123,
         skip_cache=False,
     )
+    mock_state.clear.assert_awaited_once()
     get_publisher.assert_not_called()
 
 
@@ -428,10 +460,10 @@ async def test_failure_offers_archive_link(
     """При неудаче бот предлагает открыть архив вручную."""
     status_message = Mock(spec=Message)
     status_message.delete = AsyncMock()
-    sent: list[str] = []
+    sent: list[tuple[str, dict]] = []
 
     async def answer(text, **kwargs):
-        sent.append(text)
+        sent.append((text, kwargs))
         return status_message if len(sent) == 1 else None
 
     mock_message.answer = AsyncMock(side_effect=answer)
@@ -443,6 +475,7 @@ async def test_failure_offers_archive_link(
     request.complete(error=RuntimeError('нет текста'))
     orchestrator = AsyncMock()
     orchestrator.process_url = AsyncMock(return_value=request)
+    state = AsyncMock()
 
     with patch(
         'bot.handlers.url_handler._get_orchestrator',
@@ -452,9 +485,24 @@ async def test_failure_offers_archive_link(
             message=mock_message,
             url='https://welt.de/plus/a',
             user_id=123,
-            state=AsyncMock(),
+            state=state,
         )
 
-    reply = sent[-1]
-    assert 'archive.ph/newest/' in reply
-    assert 'самостоятельно' in reply
+    reply, kwargs = sent[-1]
+    assert 'web.archive.org/web/*/' in reply
+    assert 'Wayback Machine' in reply
+    markup = kwargs['reply_markup']
+    buttons = [
+        button
+        for row in markup.inline_keyboard
+        for button in row
+    ]
+    assert any(button.callback_data == 'retry_archives' for button in buttons)
+    assert any(
+        button.url and 'web.archive.org/web/*/' in button.url
+        for button in buttons
+    )
+    state.set_data.assert_awaited_once_with(
+        {'url': 'https://welt.de/plus/a'},
+    )
+    state.clear.assert_not_awaited()
