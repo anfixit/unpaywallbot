@@ -2,6 +2,7 @@
 
 from unittest.mock import AsyncMock, Mock, patch
 
+import httpx
 import pytest
 
 from bot.constants import BypassMethod, PaywallType
@@ -278,3 +279,135 @@ async def test_primary_failure_preserves_archive_fallback_method(
     assert result.article.extraction_method == (
         BypassMethod.ARCHIVE_RELAY
     )
+
+
+@pytest.mark.asyncio
+async def test_method_network_error_falls_back_to_archive(
+    orchestrator,
+    mock_classifier,
+) -> None:
+    """Сетевая ошибка метода не отменяет archive fallback."""
+    paywall_info = PaywallInfo(
+        url='https://failing-site.com/article',
+        domain='failing-site.com',
+        paywall_type=PaywallType.METERED,
+        suggested_method=BypassMethod.GOOGLEBOT_SPOOF,
+    )
+    mock_classifier.classify.return_value = paywall_info
+    archived = Article(
+        url=paywall_info.url,
+        content='Snapshot content',
+        extraction_method=BypassMethod.ARCHIVE_RELAY,
+    )
+    archive = AsyncMock(return_value=archived)
+    patch_get, patch_save = _patch_cache()
+
+    with (
+        patch_get,
+        patch_save,
+        patch(
+            'bot.services.orchestrator'
+            '.fetch_via_googlebot_spoof',
+            new=AsyncMock(
+                side_effect=httpx.ConnectError('down'),
+            ),
+        ),
+        patch(
+            'bot.services.orchestrator.fetch_via_archive',
+            new=archive,
+        ),
+    ):
+        result = await orchestrator.process_url(
+            paywall_info.url,
+        )
+
+    assert archive.await_count == 1
+    assert result.success is True
+    assert result.article is archived
+    assert result.error_message is None
+
+
+@pytest.mark.asyncio
+async def test_platform_error_falls_back_to_archive(
+    orchestrator,
+    mock_classifier,
+) -> None:
+    """Сбой платформы не превращается в общую ошибку."""
+    paywall_info = PaywallInfo(
+        url='https://newyorker.com/article',
+        domain='newyorker.com',
+        paywall_type=PaywallType.METERED,
+        suggested_method=BypassMethod.GOOGLEBOT_SPOOF,
+        platform='conde_nast',
+    )
+    mock_classifier.classify.return_value = paywall_info
+    archived = Article(
+        url=paywall_info.url,
+        content='Snapshot content',
+        extraction_method=BypassMethod.ARCHIVE_RELAY,
+    )
+    archive = AsyncMock(return_value=archived)
+    patch_get, patch_save = _patch_cache()
+
+    with (
+        patch_get,
+        patch_save,
+        patch.object(
+            orchestrator.platforms['conde_nast'],
+            'handle',
+            new=AsyncMock(
+                side_effect=httpx.ReadTimeout('slow'),
+            ),
+        ),
+        patch(
+            'bot.services.orchestrator.fetch_via_archive',
+            new=archive,
+        ),
+    ):
+        result = await orchestrator.process_url(
+            paywall_info.url,
+        )
+
+    assert archive.await_count == 1
+    assert result.success is True
+    assert result.article is archived
+
+
+@pytest.mark.asyncio
+async def test_platform_runtime_error_falls_back(
+    orchestrator,
+    mock_classifier,
+) -> None:
+    """Отсутствие аккаунта не роняет обработку."""
+    paywall_info = PaywallInfo(
+        url='https://republic.ru/article',
+        domain='republic.ru',
+        paywall_type=PaywallType.HARD,
+        platform='republic',
+    )
+    mock_classifier.classify.return_value = paywall_info
+    archive = AsyncMock(return_value=None)
+    patch_get, patch_save = _patch_cache()
+
+    with (
+        patch_get,
+        patch_save,
+        patch.object(
+            orchestrator.platforms['republic'],
+            'handle',
+            new=AsyncMock(
+                side_effect=RuntimeError('нет аккаунта'),
+            ),
+        ),
+        patch(
+            'bot.services.orchestrator.fetch_via_archive',
+            new=archive,
+        ),
+    ):
+        result = await orchestrator.process_url(
+            paywall_info.url,
+        )
+
+    assert archive.await_count == 1
+    assert result.success is False
+    assert result.error_message is None

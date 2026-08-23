@@ -20,6 +20,10 @@ from aiogram.types import (
 from bot.config import settings
 from bot.models.user_request import UserRequest
 from bot.utils.privacy import pseudonymize_user_id
+from bot.utils.request_context import (
+    clear_current_request,
+    get_current_request,
+)
 
 __all__ = ['AccessLogMiddleware']
 
@@ -93,6 +97,8 @@ class AccessLogMiddleware(BaseMiddleware):
                 ),
             })
 
+        clear_current_request()
+
         try:
             result = await handler(event, data)
         except Exception:
@@ -100,7 +106,7 @@ class AccessLogMiddleware(BaseMiddleware):
             raise
         else:
             log_entry['status'] = 'success'
-            self._enrich_from_request(log_entry, data)
+            self._enrich_from_request(log_entry)
             return result
         finally:
             log_entry['duration_ms'] = round(
@@ -112,10 +118,9 @@ class AccessLogMiddleware(BaseMiddleware):
     @staticmethod
     def _enrich_from_request(
         log_entry: dict[str, Any],
-        data: dict[str, Any],
     ) -> None:
         """Add non-sensitive processing metadata."""
-        request = data.get('request')
+        request = get_current_request()
         if not isinstance(request, UserRequest):
             return
 

@@ -5,9 +5,14 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from aiogram.types import Chat, Message, User
 
+from bot.constants import MAX_MESSAGE_LENGTH
 from bot.handlers import callbacks, start, url_handler
 from bot.models.article import Article
 from bot.models.user_request import UserRequest
+from bot.utils.request_context import (
+    clear_current_request,
+    get_current_request,
+)
 
 
 @pytest.fixture
@@ -191,3 +196,115 @@ async def test_process_url_keeps_telegraph_disabled(
         skip_cache=False,
     )
     get_publisher.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_long_article_parts_fit_telegram_limit(
+    mock_message,
+) -> None:
+    """Каждая часть с заголовком укладывается в лимит."""
+    status_message = Mock(spec=Message)
+    status_message.delete = AsyncMock()
+    sent: list[str] = []
+
+    async def answer(text, **kwargs):
+        if not sent:
+            sent.append(text)
+            return status_message
+        sent.append(text)
+        return None
+
+    mock_message.answer = AsyncMock(side_effect=answer)
+    mock_state = AsyncMock()
+
+    request = UserRequest(
+        user_id=123,
+        original_url='https://example.com/long',
+    )
+    request.complete(
+        Article(
+            url='https://example.com/long',
+            title='Длинная статья',
+            content='слово ' * 4000,
+        ),
+    )
+    orchestrator = AsyncMock()
+    orchestrator.process_url = AsyncMock(
+        return_value=request,
+    )
+
+    with (
+        patch.object(
+            url_handler.settings,
+            'telegraph_enabled',
+            False,
+        ),
+        patch(
+            'bot.handlers.url_handler._get_orchestrator',
+            return_value=orchestrator,
+        ),
+    ):
+        await url_handler.process_url_message(
+            message=mock_message,
+            url='https://example.com/long',
+            user_id=123,
+            state=mock_state,
+        )
+
+    parts = [
+        text for text in sent
+        if text.startswith('📄 Часть')
+    ]
+    assert len(parts) > 1
+    assert all(
+        len(text) <= MAX_MESSAGE_LENGTH for text in sent
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_url_publishes_request_context(
+    mock_message,
+) -> None:
+    """Обработанный запрос доступен access log."""
+    status_message = Mock(spec=Message)
+    status_message.delete = AsyncMock()
+    mock_message.answer = AsyncMock(
+        side_effect=[status_message, None, None],
+    )
+    mock_state = AsyncMock()
+
+    request = UserRequest(
+        user_id=123,
+        original_url='https://example.com/article',
+    )
+    request.complete(
+        Article(
+            url='https://example.com/article',
+            content='Public text',
+        ),
+    )
+    orchestrator = AsyncMock()
+    orchestrator.process_url = AsyncMock(
+        return_value=request,
+    )
+
+    clear_current_request()
+    with (
+        patch.object(
+            url_handler.settings,
+            'telegraph_enabled',
+            False,
+        ),
+        patch(
+            'bot.handlers.url_handler._get_orchestrator',
+            return_value=orchestrator,
+        ),
+    ):
+        await url_handler.process_url_message(
+            message=mock_message,
+            url='https://example.com/article',
+            user_id=123,
+            state=mock_state,
+        )
+
+    assert get_current_request() is request

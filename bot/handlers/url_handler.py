@@ -11,11 +11,13 @@ from aiogram.types import Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import settings
+from bot.constants import MAX_MESSAGE_LENGTH
 from bot.models.telegraph_publisher import (
     TelegraphPublisher,
     get_telegraph_publisher,
 )
 from bot.services.orchestrator import Orchestrator
+from bot.utils.request_context import set_current_request
 from bot.utils.text_formatter import split_into_chunks
 from bot.utils.url_utils import (
     extract_domain,
@@ -31,6 +33,10 @@ router = Router()
 _orchestrator: Orchestrator | None = None
 _URL_PATTERN = re.compile(r'https?://[^\s]+')
 _TRAILING_PUNCTUATION = '.,;:!?)]}'
+
+# Длина префикса «📄 Часть i/N\n\n» с запасом
+# на трёхзначные номера частей.
+_PART_HEADER_RESERVE = 40
 
 
 def _get_orchestrator() -> Orchestrator:
@@ -110,6 +116,9 @@ async def process_url_message(
     finally:
         await _delete_status_message(status_msg)
 
+    # Метаданные обработки для access log.
+    set_current_request(request)
+
     if not request.success or not request.article:
         await message.answer(
             '❌ Не удалось извлечь доступный текст статьи.\n\n'
@@ -171,7 +180,12 @@ async def process_url_message(
         disable_web_page_preview=True,
     )
 
-    chunks = split_into_chunks(article.content)
+    # Резерв под заголовок «Часть i/N»: с ним
+    # сообщение не должно превышать лимит Telegram.
+    chunks = split_into_chunks(
+        article.content,
+        MAX_MESSAGE_LENGTH - _PART_HEADER_RESERVE,
+    )
     for index, chunk in enumerate(chunks, 1):
         text = chunk
         if len(chunks) > 1:

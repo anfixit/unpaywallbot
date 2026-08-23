@@ -51,7 +51,7 @@ jobs:
         id: mypy
         run: |
           set +e
-          uv run mypy bot > mypy-report.txt 2>&1
+          uv run mypy bot scripts > mypy-report.txt 2>&1
           status=$?
           cat mypy-report.txt
           echo "status=$status" >> "$GITHUB_OUTPUT"
@@ -200,8 +200,19 @@ jobs:
       - name: Send workflow result
         shell: bash
         run: |
+          set -Eeuo pipefail
+          # Форк-PR не получает секреты: предупреждаем, но не
+          # блокируем проверку. На main отсутствие секретов —
+          # ошибка конфигурации уведомлений.
           if [[ -z "$TELEGRAM_TOKEN" || -z "$TELEGRAM_CHAT_ID" ]]; then
-            echo 'Telegram notification secrets are not available.'
+            msg='Telegram notification secrets are not available;'
+            msg="$msg set TELEGRAM_NOTIFICATION_TOKEN and"
+            msg="$msg TELEGRAM_NOTIFICATION_CHAT_ID."
+            if [[ "$GITHUB_REF_NAME" == 'main' ]]; then
+              echo "::error::${msg}"
+              exit 1
+            fi
+            echo "::warning::${msg}"
             exit 0
           fi
 

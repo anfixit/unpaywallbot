@@ -1,11 +1,16 @@
 """Получение публичного HTML с crawler User-Agent."""
 
+import asyncio
 import logging
 import secrets
 
 import httpx
 
-from bot.constants import MAX_RETRY_COUNT, BypassMethod
+from bot.constants import (
+    MAX_RETRY_COUNT,
+    RETRY_BACKOFF_FACTOR,
+    BypassMethod,
+)
 from bot.models.article import Article
 from bot.services.content_extractor import ContentExtractor
 from bot.services.http_client import create_safe_http_client
@@ -98,6 +103,12 @@ async def fetch_via_googlebot_spoof(
                     attempt + 1,
                     MAX_RETRY_COUNT,
                 )
+                if attempt < MAX_RETRY_COUNT - 1:
+                    # Повтор без паузы только усиливает
+                    # ограничение на стороне сайта.
+                    await asyncio.sleep(
+                        RETRY_BACKOFF_FACTOR ** attempt,
+                    )
                 continue
 
             response.raise_for_status()

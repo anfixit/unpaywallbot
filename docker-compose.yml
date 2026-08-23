@@ -11,6 +11,12 @@ services:
       - --save
       - "60"
       - "1"
+      # Кеш статей не ограничен по числу записей, поэтому
+      # предел задаётся здесь, а не только через TTL.
+      - --maxmemory
+      - "96mb"
+      - --maxmemory-policy
+      - allkeys-lru
     expose:
       - "6379"
     volumes:
@@ -24,6 +30,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    mem_limit: 160m
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -55,17 +62,22 @@ services:
       - egress
     read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=512m
-      - /home/appuser/.cache:rw,nosuid,nodev,size=128m
+      # tmpfs занимает RAM по мере заполнения; размеры
+      # рассчитаны на хост с 1 ГБ памяти.
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /home/appuser/.cache:rw,nosuid,nodev,size=64m
       - /home/appuser/.config:rw,nosuid,nodev,size=16m
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
     pids_limit: 256
-    mem_limit: 1g
+    mem_limit: 384m
     cpus: 1.0
-    shm_size: 512m
+    # Большой /dev/shm нужен только Chromium, а headless-режим
+    # по умолчанию выключен. Поднимите до 512m, если включаете его
+    # (и только на хосте, где хватает RAM).
+    shm_size: 64m
     stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "python", "-m", "bot.healthcheck"]

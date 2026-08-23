@@ -50,7 +50,7 @@ Run:
 
 ```bash
 uv run ruff check bot tests scripts
-uv run mypy bot
+uv run mypy bot scripts
 uv run pytest
 uvx bandit -r bot -q
 docker build -t unpaywallbot:contrib .

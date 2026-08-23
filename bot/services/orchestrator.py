@@ -7,6 +7,7 @@ import httpx
 from bot.auth.account_manager import AccountManager
 from bot.constants import BypassMethod, PaywallType
 from bot.models.article import Article
+from bot.models.paywall_info import PaywallInfo
 from bot.models.user_request import UserRequest
 from bot.services.content_extractor import ContentExtractor
 from bot.services.methods.archive_relay import fetch_via_archive
@@ -32,6 +33,14 @@ from bot.utils.url_utils import extract_domain
 __all__ = ['Orchestrator']
 
 logger = logging.getLogger(__name__)
+
+# Ошибки, после которых остаётся смысл пробовать
+# другой источник, а не сообщать о сбое обработки.
+_RECOVERABLE_ERRORS = (
+    httpx.HTTPError,
+    OSError,
+    RuntimeError,
+)
 
 
 class Orchestrator:
@@ -96,11 +105,12 @@ class Orchestrator:
 
             platform_name = paywall_info.platform
             if platform_name and platform_name in self.platforms:
-                platform = self.platforms[platform_name]
-                article = await platform.handle(
+                article = await self._run_platform(
+                    self.platforms[platform_name],
+                    platform_name,
                     url,
                     paywall_info,
-                    user_id=user_id,
+                    user_id,
                 )
                 return await self._complete(
                     request,
@@ -141,6 +151,35 @@ class Orchestrator:
                 ),
             )
             return request
+
+    async def _run_platform(
+        self,
+        platform: PlatformProtocol,
+        platform_name: str,
+        url: str,
+        paywall_info: PaywallInfo,
+        user_id: int | None,
+    ) -> Article | None:
+        """Выполнить платформенный обработчик.
+
+        Платформа сама выбирает стратегию. Сетевая
+        или конфигурационная ошибка не должна ронять
+        запрос: в этом случае пробуем публичный архив.
+        """
+        try:
+            return await platform.handle(
+                url,
+                paywall_info,
+                user_id=user_id,
+            )
+        except _RECOVERABLE_ERRORS:
+            logger.warning(
+                'Платформа %s не отработала для %s',
+                platform_name,
+                extract_domain(url),
+                exc_info=True,
+            )
+            return await self._fallback(url)
 
     async def _handle_unknown(
         self,
@@ -224,6 +263,33 @@ class Orchestrator:
         method: BypassMethod,
         user_id: int | None = None,
     ) -> Article | None:
+        """Выполнить метод, не роняя запрос на ошибке.
+
+        Возвращает None, если метод недоступен или
+        упал: вызывающий код перейдёт к архивному
+        fallback.
+        """
+        try:
+            return await self._dispatch_method(
+                url,
+                method,
+                user_id,
+            )
+        except _RECOVERABLE_ERRORS:
+            logger.warning(
+                'Метод %s не отработал для %s',
+                method,
+                extract_domain(url),
+                exc_info=True,
+            )
+            return None
+
+    async def _dispatch_method(
+        self,
+        url: str,
+        method: BypassMethod,
+        user_id: int | None = None,
+    ) -> Article | None:
         """Выполнить выбранный метод извлечения."""
         if method == BypassMethod.JS_DISABLE:
             return await fetch_via_js_disable(
@@ -246,19 +312,12 @@ class Orchestrator:
         if method == BypassMethod.HEADLESS_AUTH:
             if not user_id or not self.account_manager:
                 return None
-            try:
-                return await fetch_via_headless_auth(
-                    url,
-                    user_id=user_id,
-                    account_manager=self.account_manager,
-                    extractor=self.extractor,
-                )
-            except RuntimeError:
-                logger.warning(
-                    'headless_auth не удался для %s',
-                    extract_domain(url),
-                )
-                return None
+            return await fetch_via_headless_auth(
+                url,
+                user_id=user_id,
+                account_manager=self.account_manager,
+                extractor=self.extractor,
+            )
 
         if method == BypassMethod.WSJ_BYPASS:
             return await fetch_via_wsj(

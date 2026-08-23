@@ -1,7 +1,9 @@
 """Тесты для немецкой платформы."""
 
+import logging
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from bot.constants import PaywallType
@@ -136,3 +138,46 @@ def test_check_if_premium(platform) -> None:
         'https://www.spiegel.de/kultur/artikel',
         'spiegel.de',
     ) is False
+
+
+@pytest.mark.asyncio
+async def test_platform_logs_domain_not_url(
+    platform,
+    paywall_info,
+    caplog,
+) -> None:
+    """В логи попадает домен, а не полный URL статьи."""
+    url = (
+        'https://www.spiegel.de/plus/'
+        'geheimer-titel-a-12345?token=secret'
+    )
+
+    with (
+        caplog.at_level(logging.DEBUG, logger=_MODULE),
+        patch(
+            f'{_MODULE}.fetch_via_js_disable',
+            new=AsyncMock(
+                side_effect=httpx.ConnectError('down'),
+            ),
+        ),
+        patch(
+            f'{_MODULE}.fetch_via_archive',
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        result = await platform.handle(
+            url,
+            paywall_info,
+        )
+
+    assert result is None
+    assert caplog.records
+    for record in caplog.records:
+        message = record.getMessage()
+        assert url not in message
+        assert 'geheimer-titel' not in message
+        assert 'secret' not in message
+    assert any(
+        'spiegel.de' in record.getMessage()
+        for record in caplog.records
+    )

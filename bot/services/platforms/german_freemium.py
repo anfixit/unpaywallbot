@@ -29,6 +29,7 @@ from bot.services.methods.headless_auth import (
 from bot.services.methods.js_disable import (
     fetch_via_js_disable,
 )
+from bot.utils.url_utils import extract_domain
 
 __all__ = ['GermanFreemiumPlatform']
 
@@ -86,6 +87,7 @@ class GermanFreemiumPlatform:
         Returns:
             Article или None.
         """
+        domain = paywall_info.domain or extract_domain(url)
         is_premium = self._check_if_premium(
             url, paywall_info.domain,
         )
@@ -114,7 +116,7 @@ class GermanFreemiumPlatform:
                 logger.debug(
                     'SZ reduced: сетевая ошибка'
                     ' для %s',
-                    url,
+                    domain,
                 )
 
         # Headless с аккаунтом (если есть)
@@ -135,7 +137,7 @@ class GermanFreemiumPlatform:
             except RuntimeError:
                 logger.warning(
                     'Headless не удался для %s',
-                    url,
+                    domain,
                 )
 
         # Fallback: js_disable (иногда premium
@@ -153,14 +155,14 @@ class GermanFreemiumPlatform:
             logger.debug(
                 'js_disable premium fallback:'
                 ' сетевая ошибка для %s',
-                url,
+                domain,
             )
 
         # Последний шанс: archive.ph
         logger.info(
             'Все методы не удались для %s,'
             ' пробуем archive.ph',
-            url,
+            domain,
         )
         try:
             return await fetch_via_archive(
@@ -173,7 +175,7 @@ class GermanFreemiumPlatform:
             logger.warning(
                 'archive.ph: сетевая ошибка'
                 ' для %s',
-                url,
+                domain,
             )
             return None
 
@@ -191,6 +193,7 @@ class GermanFreemiumPlatform:
         Returns:
             Article или None.
         """
+        domain = extract_domain(url)
         try:
             article = await fetch_via_js_disable(
                 url, extractor=self.extractor,
@@ -204,13 +207,13 @@ class GermanFreemiumPlatform:
             logger.debug(
                 'js_disable: сетевая ошибка'
                 ' для %s',
-                url,
+                domain,
             )
 
         logger.info(
             'js_disable вернул None для %s'
             ' — пробуем archive.ph',
-            url,
+            domain,
         )
         try:
             return await fetch_via_archive(
@@ -223,7 +226,7 @@ class GermanFreemiumPlatform:
             logger.warning(
                 'archive.ph: сетевая ошибка'
                 ' для %s',
-                url,
+                domain,
             )
             return None
 
