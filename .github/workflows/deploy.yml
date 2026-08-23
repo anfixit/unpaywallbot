@@ -297,6 +297,19 @@ jobs:
                   },
               }],
           }
+          # Половина узлов подписки использует xhttp:
+          # без его параметров соединение не встанет.
+          stream = config['outbounds'][0]['streamSettings']
+          if stream['network'] == 'xhttp':
+              xhttp = {'path': get('path', '/'), 'mode': get('mode', 'auto')}
+              extra = get('extra')
+              if extra:
+                  try:
+                      xhttp['extra'] = json.loads(extra)
+                  except ValueError:
+                      pass
+              stream['xhttpSettings'] = xhttp
+
           with open(sys.argv[1], 'w', encoding='utf-8') as handle:
               json.dump(config, handle)
           PY
@@ -379,7 +392,11 @@ jobs:
           BOT_IMAGE="$image_ref" "${compose_cmd[@]}" pull bot
           profile_args=()
           if [[ -f archive-proxy.json ]]; then
-            chmod 600 archive-proxy.json
+            # Образ прокси работает не от root, поэтому файл
+            # должен быть читаемым. Каталог сужаем, чтобы
+            # учётные данные узла не разошлись по хосту.
+            chmod 644 archive-proxy.json
+            chmod 750 .
             profile_args=(--profile archive-proxy)
           fi
 
