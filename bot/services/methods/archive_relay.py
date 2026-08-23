@@ -4,6 +4,7 @@ import logging
 
 import httpx
 
+from bot.config import settings
 from bot.constants import BypassMethod
 from bot.models.article import Article
 from bot.services.content_extractor import ContentExtractor
@@ -41,9 +42,13 @@ async def fetch_via_archive(
 
     close_client = client is None
     if client is None:
+        # Архив закрыт для многих хостингов. Прокси
+        # применяется только здесь: адрес назначения
+        # фиксирован, поэтому SSRF-проверки не слабеют.
         client = create_safe_http_client(
             timeout_seconds=_ARCHIVE_TOTAL_TIMEOUT,
             connect_timeout_seconds=_ARCHIVE_CONNECT_TIMEOUT,
+            proxy=settings.archive_proxy_url or None,
         )
 
     if extractor is None:

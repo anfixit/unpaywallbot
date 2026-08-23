@@ -8,6 +8,8 @@ The format follows Keep a Changelog principles. The project uses semantic versio
 
 ### Added
 
+- optional `ARCHIVE_PROXY_URL` for public-archive requests, with an
+  `archive-proxy` Compose profile and deployment from a `vless://` secret
 - SSRF guard for URLs, redirects, DNS rebinding, private networks, IP literals, credentials, and non-standard ports
 - shared safe HTTP client with redirect and decoded response-size limits
 - production request timeout and controlled error handling

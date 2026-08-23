@@ -7,6 +7,7 @@ import pytest
 
 from bot.constants import BypassMethod
 from bot.models.article import Article
+from bot.services.methods import archive_relay
 from bot.services.methods.archive_relay import fetch_via_archive
 
 
@@ -70,3 +71,72 @@ async def test_archive_wait_page_returns_none() -> None:
     assert result is None
     extractor.extract.assert_not_called()
     client.post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_archive_uses_proxy_when_configured(
+    monkeypatch,
+) -> None:
+    """Запросы к архиву идут через настроенный прокси."""
+    captured: dict[str, object] = {}
+
+    def fake_client(**kwargs):
+        captured.update(kwargs)
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(
+            side_effect=httpx.ConnectError('stop'),
+        )
+        client.aclose = AsyncMock()
+        return client
+
+    monkeypatch.setattr(
+        archive_relay.settings,
+        'archive_proxy_url',
+        'http://archive-proxy:1080',
+    )
+    monkeypatch.setattr(
+        archive_relay,
+        'create_safe_http_client',
+        fake_client,
+    )
+
+    result = await archive_relay.fetch_via_archive(
+        'https://example.com/article',
+        extractor=Mock(),
+    )
+
+    assert result is None
+    assert captured['proxy'] == 'http://archive-proxy:1080'
+    # Недоступный архив не должен съедать бюджет запроса.
+    assert captured['connect_timeout_seconds'] <= 10
+
+
+@pytest.mark.asyncio
+async def test_archive_without_proxy_connects_directly(
+    monkeypatch,
+) -> None:
+    """Без настройки прокси не используется."""
+    captured: dict[str, object] = {}
+
+    def fake_client(**kwargs):
+        captured.update(kwargs)
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(
+            side_effect=httpx.ConnectError('stop'),
+        )
+        client.aclose = AsyncMock()
+        return client
+
+    monkeypatch.setattr(
+        archive_relay.settings, 'archive_proxy_url', '',
+    )
+    monkeypatch.setattr(
+        archive_relay, 'create_safe_http_client', fake_client,
+    )
+
+    await archive_relay.fetch_via_archive(
+        'https://example.com/article',
+        extractor=Mock(),
+    )
+
+    assert captured['proxy'] is None

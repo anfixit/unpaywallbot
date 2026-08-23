@@ -85,6 +85,7 @@ jobs:
       ALLOWED_USERS: ${{ secrets.ALLOWED_USERS }}
       PUBLIC_ACCESS: ${{ secrets.PUBLIC_ACCESS }}
       TELEGRAPH_ENABLED: ${{ secrets.TELEGRAPH_ENABLED }}
+      ARCHIVE_PROXY_VLESS: ${{ secrets.ARCHIVE_PROXY_VLESS }}
       GHCR_TOKEN: ${{ github.token }}
       GHCR_USERNAME: ${{ github.actor }}
       IMAGE_REF: ${{ needs.publish.outputs.image }}
@@ -244,7 +245,73 @@ jobs:
             printf 'REQUEST_TIMEOUT_SECONDS=90\n'
             printf 'TELEGRAPH_ENABLED=%s\n' \
               "${TELEGRAPH_ENABLED:-false}"
+            if [[ -n "${ARCHIVE_PROXY_VLESS:-}" ]]; then
+              printf 'ARCHIVE_PROXY_URL=http://archive-proxy:1080\n'
+            fi
           } > "$RUNNER_TEMP/.env.production"
+
+      - name: Build archive proxy configuration
+        if: ${{ env.ARCHIVE_PROXY_VLESS != '' }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          python3 - "$RUNNER_TEMP/archive-proxy.json" <<'PY'
+          import json, os, sys, urllib.parse
+
+          link = os.environ['ARCHIVE_PROXY_VLESS'].strip()
+          u = urllib.parse.urlparse(link)
+          q = urllib.parse.parse_qs(u.query)
+          get = lambda key, default='': q.get(key, [default])[0]
+
+          if u.scheme != 'vless' or not u.hostname or not u.username:
+              sys.exit('ARCHIVE_PROXY_VLESS is not a vless:// link')
+
+          config = {
+              'log': {'loglevel': 'warning'},
+              'inbounds': [{
+                  'port': 1080,
+                  'listen': '0.0.0.0',
+                  'protocol': 'http',
+              }],
+              'outbounds': [{
+                  'protocol': 'vless',
+                  'settings': {'vnext': [{
+                      'address': u.hostname,
+                      'port': u.port or 443,
+                      'users': [{
+                          'id': u.username,
+                          'encryption': 'none',
+                          'flow': get('flow'),
+                      }],
+                  }]},
+                  'streamSettings': {
+                      'network': get('type', 'tcp'),
+                      'security': get('security', 'reality'),
+                      'realitySettings': {
+                          'serverName': get('sni', u.hostname),
+                          'fingerprint': get('fp', 'chrome'),
+                          'publicKey': get('pbk'),
+                          'shortId': get('sid'),
+                          'spiderX': '',
+                      },
+                  },
+              }],
+          }
+          with open(sys.argv[1], 'w', encoding='utf-8') as handle:
+              json.dump(config, handle)
+          PY
+
+      - name: Upload archive proxy configuration
+        if: ${{ env.ARCHIVE_PROXY_VLESS != '' }}
+        run: |
+          set -Eeuo pipefail
+          port="${SSH_PORT:-22}"
+          scp \
+            -i "$HOME/.ssh/id_ed25519" \
+            -P "$port" \
+            -o BatchMode=yes \
+            "$RUNNER_TEMP/archive-proxy.json" \
+            "${SSH_USER}@${SSH_HOST}:${DEPLOY_PATH}/archive-proxy.json"
 
       - name: Upload environment file
         run: |
@@ -310,8 +377,15 @@ jobs:
           chmod 600 .env.production
 
           BOT_IMAGE="$image_ref" "${compose_cmd[@]}" pull bot
+          profile_args=()
+          if [[ -f archive-proxy.json ]]; then
+            chmod 600 archive-proxy.json
+            profile_args=(--profile archive-proxy)
+          fi
+
           BOT_IMAGE="$image_ref" \
-            "${compose_cmd[@]}" up -d --remove-orphans
+            "${compose_cmd[@]}" "${profile_args[@]}" \
+            up -d --remove-orphans
 
           healthy=false
           for _ in $(seq 1 18); do

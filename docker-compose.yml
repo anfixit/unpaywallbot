@@ -47,6 +47,38 @@ services:
         max-size: 10m
         max-file: "3"
 
+  # Прокси только для запросов к публичному архиву.
+  # Поднимается лишь с профилем archive-proxy: без
+  # конфигурации узла он не нужен и не запускается.
+  archive-proxy:
+    image: ghcr.io/xtls/xray-core:25.9.11
+    profiles: [archive-proxy]
+    restart: unless-stopped
+    command: ["-c", "/etc/xray/config.json"]
+    # Конфиг лежит с правами 0600 и владельцем deploy-
+    # пользователя, а образ работает не от root.
+    user: "0:0"
+    volumes:
+      - ./archive-proxy.json:/etc/xray/config.json:ro
+    expose:
+      - "1080"
+    networks:
+      - backend
+      - egress
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 96m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "2"
+
   bot:
     image: ${BOT_IMAGE:-ghcr.io/anfixit/unpaywallbot:latest}
     build:

@@ -132,6 +132,7 @@ Redis is available only on the private Compose network. The bot container runs a
 | `REQUEST_TIMEOUT_SECONDS` | no | `90` | Overall processing timeout, from 10 to 300 seconds |
 | `LOG_USER_IDENTIFIERS` | no | `false` | Store raw Telegram identifiers in access logs |
 | `TELEGRAPH_ENABLED` | no | `false` | Publish extracted text to the third-party Telegraph service |
+| `ARCHIVE_PROXY_URL` | no | - | HTTP proxy used **only** for public-archive requests |
 
 * Production requires either a non-empty `ALLOWED_USERS` value or `PUBLIC_ACCESS=true`.
 
@@ -146,6 +147,18 @@ of the text. Telegraph pages are public to anyone holding the link.
 Enable it only when this transfer is appropriate for your deployment and
 users. When it is disabled, or when publication fails, the text is split
 into Telegram messages instead.
+
+### Archive proxy
+
+Public archives refuse connections from many hosting ranges. When
+`ARCHIVE_PROXY_URL` is set, only the archive adapter uses it — the
+destination there is always the archive itself, so the outbound URL
+policy that protects user-supplied links is unaffected. Publisher
+requests always connect directly.
+
+The Compose stack ships an optional `archive-proxy` service behind the
+`archive-proxy` profile. It starts only when a proxy configuration file
+is present.
 
 ## Publication configuration
 

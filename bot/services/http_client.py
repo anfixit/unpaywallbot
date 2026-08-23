@@ -67,6 +67,7 @@ def create_safe_http_client(
     *,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     connect_timeout_seconds: float | None = None,
+    proxy: str | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> httpx.AsyncClient:
     """Создать клиент с SSRF-защитой.
@@ -75,6 +76,11 @@ def create_safe_http_client(
     установки соединения от общего таймаута:
     недоступный хост тогда отваливается быстро,
     не расходуя бюджет всего запроса.
+
+    proxy задаётся только там, где адрес назначения
+    фиксирован. Пользовательские URL через прокси не
+    ходят: тогда проверка ensure_public_url перестала
+    бы отражать реальное подключение.
     """
     timeout = httpx.Timeout(
         timeout_seconds,
@@ -82,6 +88,7 @@ def create_safe_http_client(
     )
     return httpx.AsyncClient(
         timeout=timeout,
+        proxy=proxy or None,
         follow_redirects=True,
         max_redirects=MAX_REDIRECTS,
         limits=httpx.Limits(
