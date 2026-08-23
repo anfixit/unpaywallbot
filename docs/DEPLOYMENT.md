@@ -211,10 +211,30 @@ Create production environment secrets:
 | `ENCRYPTION_KEY` | Random secret with at least 32 characters |
 | `ALLOWED_USERS` | JSON array such as `[123456789]` |
 | `PUBLIC_ACCESS` | Normally `false` |
-| `GHCR_USERNAME` | GitHub account or machine user |
-| `GHCR_TOKEN` | Token with `read:packages` |
 
-The workflow uses `GITHUB_TOKEN` to publish the image. `GHCR_TOKEN` is used only by the server to pull it.
+The workflow uses the run's own `GITHUB_TOKEN` both to publish the image and
+to authenticate the server for the pull, then logs the server out of GHCR
+again. No separate `GHCR_USERNAME` or `GHCR_TOKEN` secret is required.
+
+`SSH_PORT`, `SSH_KNOWN_HOSTS`, and `PUBLIC_ACCESS` are optional. Without
+`SSH_KNOWN_HOSTS` the workflow falls back to `ssh-keyscan`, which trusts the
+host key on first use — set the verified line before the first real
+deployment.
+
+### Notification secrets
+
+Build and deployment results are reported to Telegram. These two values are
+**repository** secrets, not `production` environment secrets, because the
+notification jobs do not join the protected environment:
+
+| Repository secret | Purpose |
+| --- | --- |
+| `TELEGRAM_NOTIFICATION_TOKEN` | Token of the notification bot |
+| `TELEGRAM_NOTIFICATION_CHAT_ID` | Chat that receives the reports |
+
+Both workflows notify `@gitanfinotification_bot`. The deployment workflow
+fails when the values are missing, and `CI` fails on `main` and warns on
+pull requests, so a silently missing notification cannot go unnoticed.
 
 ## 9. Verify the SSH host key
 

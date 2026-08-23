@@ -161,7 +161,7 @@ When adding or changing an entry:
 ```bash
 uv sync --locked --all-extras
 uv run ruff check bot tests scripts
-uv run mypy bot
+uv run mypy bot scripts
 uv run pytest
 uvx bandit -r bot -q
 uv export --locked --no-dev \

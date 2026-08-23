@@ -23,6 +23,17 @@ The format follows Keep a Changelog principles. The project uses semantic versio
 
 ### Changed
 
+- application logging is configured on the root logger, so every module
+  reaches the rotating log file instead of only the entry point
+- noisy third-party loggers are limited to `WARNING`
+- crawler-view retries after `403` or `429` wait with exponential backoff
+- extraction failures caused by network or configuration errors fall back
+  to the public archive instead of failing the whole request
+- `mypy` also checks `scripts/`
+- container limits are sized for a 1 GB host, and Redis caps the article
+  cache with `maxmemory` and an LRU policy instead of growing without bound
+- deployment prunes untagged images older than a week, so repeated releases
+  no longer fill the server disk
 - Redis is no longer published to the host
 - Docker runtime is non-root, read-only, resource-limited, and log-rotated
 - Playwright browser installation is available to the runtime user
@@ -39,6 +50,25 @@ The format follows Keep a Changelog principles. The project uses semantic versio
 
 ### Fixed
 
+- log records from every module except `bot.main` were discarded
+- article parts longer than the Telegram limit once the part header was
+  added, which dropped the text of long articles
+- access logs never recorded paywall or article metadata, because no
+  handler published the processed request
+- log-report script counted only raw `user_id` records, so pseudonymous
+  logs produced empty user statistics
+- diagnostic script `scripts/test_paywall.py` called `process_url` with an
+  argument that does not exist
+- German freemium platform logged full article URLs instead of domains
+- cache reads raised instead of degrading when Redis was unavailable
+- tests required manual environment variables to run locally
+- deploy workflow ran the production job on every successful `main` build,
+  although the documented `DEPLOY_ENABLED` gate was never implemented
+- deployment guide listed `GHCR_USERNAME` and `GHCR_TOKEN` secrets that the
+  workflow does not read
+- deployment notification could be skipped entirely when the issue comment
+  step failed first, and both workflows treated missing notification secrets
+  as a silent success
 - Playwright driver leak
 - stale processing messages after failures
 - URL parsing with trailing punctuation

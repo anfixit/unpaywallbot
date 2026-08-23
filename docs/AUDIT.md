@@ -235,6 +235,69 @@ Before enabling deployment:
 - Redis must have no host port
 - `DEPLOY_ENABLED` must remain false until server bootstrap is complete
 
+## Follow-up review 2026-08-22
+
+A second pass focused on behaviour that the existing gates could not see:
+Ruff, strict mypy, Bandit, and the unit suite were all green while several
+runtime paths were broken. All findings below were reproduced before the
+fix and are covered by regression tests.
+
+| ID | Severity | Finding | Status |
+| --- | --- | --- | --- |
+| LOG-02 | High | Only `bot.main` had a log handler, so records from every other module were discarded | Fixed |
+| OBS-01 | Medium | Access-log enrichment read a `request` key that no handler ever set | Fixed |
+| OBS-02 | Medium | Log report counted raw `user_id` only, so pseudonymous logs showed no users | Fixed |
+| PRIV-04 | Medium | German freemium platform logged full article URLs | Fixed |
+| NET-04 | High | A network error in the suggested method aborted the request instead of using the archive fallback | Fixed |
+| NET-05 | Low | Crawler-view retried `403` and `429` with no delay | Fixed |
+| UX-03 | Medium | Multi-part replies exceeded the Telegram limit once the part header was added | Fixed |
+| CACHE-02 | Medium | A Redis failure during cache read propagated as an internal error | Fixed |
+| DEV-01 | Medium | `mypy` did not cover `scripts/`, hiding a call-signature break | Fixed |
+| DEV-02 | Low | Tests required manually exported environment variables | Fixed |
+| CICD-03 | High | Documented `DEPLOY_ENABLED` gate did not exist, so production deployed on every successful `main` build | Fixed |
+| DOC-02 | Low | Deployment guide required two GHCR secrets that the workflow never reads | Fixed |
+
+### Observability
+
+The queue handler now lives on the root logger, so `logging.getLogger(__name__)`
+in any module reaches the console and the rotating file. Noisy third-party
+loggers are pinned to `WARNING`. Previously, application `INFO` was dropped
+and `WARNING` or higher went to `stderr` unformatted through the logging
+last-resort handler, leaving no operational record.
+
+Processing metadata reaches the access log through a request-scoped
+`ContextVar` set by the URL handler and read by `AccessLogMiddleware` in the
+same task. The log gains `paywall` and `article` sections; it still contains
+no raw identifiers, URLs, titles, or article text. The context is cleared
+before each update, so metadata cannot leak between requests.
+
+Because LOG-02 masked PRIV-04, both were fixed together: enabling module
+logging without redacting the German freemium platform would have started
+writing full article URLs to disk.
+
+### Extraction resilience
+
+`Orchestrator` treats `httpx.HTTPError`, `OSError`, and `RuntimeError` from a
+platform handler or a concrete method as recoverable: it logs the domain and
+falls back to an existing public snapshot. Before the fix, a transient
+connection error on a mapped domain returned an internal-error message and
+never attempted the documented archive fallback.
+
+### Deployment gate
+
+`README`, `docs/DEPLOYMENT.md`, and this audit all stated that server
+deployment stays disabled until the repository variable `DEPLOY_ENABLED` is
+`true`. No such condition existed in `.github/workflows/deploy.yml`: the
+`deploy` job ran whenever CI succeeded on `main`. The job now carries
+`if: vars.DEPLOY_ENABLED == 'true'`, so the documented gate is real and the
+first production release stays a deliberate action.
+
+### Delivery
+
+Long article text is split with room reserved for the `Часть i/N` header, so
+no outgoing message exceeds the 4096-character Telegram limit. Previously a
+five-part article produced four messages that Telegram rejected.
+
 ## Follow-up review triggers
 
 Repeat the security review after changes to:
