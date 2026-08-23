@@ -67,7 +67,6 @@ async def test_url(
     request = await orchestrator.process_url(
         url=url,
         user_id=user_id,
-        username='test_user',
         skip_cache=True,
     )
 

@@ -14,19 +14,26 @@ import json
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from bot.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+LogRecord = dict[str, Any]
+
 _DEFAULT_LOG_DIR = Path('data/logs')
 _DEFAULT_DAYS = 7
+
+# Псевдоним пишется по умолчанию, raw user_id —
+# только при LOG_USER_IDENTIFIERS=true.
+_USER_KEYS = ('user_hash', 'user_id')
 
 
 def _load_logs(
     log_dir: Path,
     cutoff: datetime,
-) -> list[dict]:
+) -> list[LogRecord]:
     """Загрузить логи новее cutoff.
 
     Args:
@@ -37,7 +44,7 @@ def _load_logs(
         Список записей из JSONL-файлов.
     """
     log_files = sorted(log_dir.glob('access_*.jsonl'))
-    records: list[dict] = []
+    records: list[LogRecord] = []
 
     for log_file in log_files:
         try:
@@ -69,13 +76,26 @@ def _load_logs(
     return records
 
 
-def _print_user_stats(logs: list[dict]) -> None:
+def _user_key(log: LogRecord) -> str | None:
+    """Вернуть идентификатор пользователя из записи."""
+    for key in _USER_KEYS:
+        value = log.get(key)
+        if value is not None:
+            return str(value)
+    return None
+
+
+def _print_user_stats(logs: list[LogRecord]) -> None:
     """Статистика по пользователям."""
-    users = Counter(
-        log['user_id']
-        for log in logs
-        if 'user_id' in log
+    users: Counter[str] = Counter(
+        key
+        for key in (_user_key(log) for log in logs)
+        if key is not None
     )
+    if not users:
+        logger.info('Записей с пользователями нет')
+        return
+
     logger.info(
         'Уникальных пользователей: %d', len(users),
     )
@@ -84,7 +104,7 @@ def _print_user_stats(logs: list[dict]) -> None:
         logger.info('  - %s: %d запросов', uid, count)
 
 
-def _print_success_stats(logs: list[dict]) -> None:
+def _print_success_stats(logs: list[LogRecord]) -> None:
     """Статистика успешности."""
     success = sum(
         1 for log in logs
@@ -104,9 +124,9 @@ def _print_success_stats(logs: list[dict]) -> None:
     logger.info('Ошибок: %d', errors)
 
 
-def _print_paywall_stats(logs: list[dict]) -> None:
+def _print_paywall_stats(logs: list[LogRecord]) -> None:
     """Статистика по типам paywall."""
-    types: Counter = Counter()
+    types: Counter[str] = Counter()
     for log in logs:
         pw = log.get('paywall')
         if pw and 'type' in pw:
@@ -125,7 +145,7 @@ def _print_paywall_stats(logs: list[dict]) -> None:
         )
 
 
-def _print_duration_stats(logs: list[dict]) -> None:
+def _print_duration_stats(logs: list[LogRecord]) -> None:
     """Статистика по времени ответа."""
     durations = [
         log['duration_ms']
@@ -144,7 +164,7 @@ def _print_duration_stats(logs: list[dict]) -> None:
     )
 
 
-def _print_errors_by_day(logs: list[dict]) -> None:
+def _print_errors_by_day(logs: list[LogRecord]) -> None:
     """Ошибки по дням."""
     by_day: dict[str, int] = defaultdict(int)
     for log in logs:
