@@ -32,6 +32,8 @@ The format follows Keep a Changelog principles. The project uses semantic versio
   known paywall is reported as a public fragment instead of a full text
 - the archive adapter uses a short connect timeout, so an unreachable
   archive no longer consumes the request budget
+- the archive adapter recognises the anti-bot challenge and pauses for
+  thirty minutes instead of repeating requests it cannot satisfy
 - application logging is configured on the root logger, so every module
   reaches the rotating log file instead of only the entry point
 - noisy third-party loggers are limited to `WARNING`

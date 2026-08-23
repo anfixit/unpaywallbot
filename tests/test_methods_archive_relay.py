@@ -140,3 +140,77 @@ async def test_archive_without_proxy_connects_directly(
     )
 
     assert captured['proxy'] is None
+
+
+@pytest.fixture(autouse=True)
+def _clear_cooldown():
+    """Каждый тест начинает без активной паузы."""
+    archive_relay.reset_cooldown()
+    yield
+    archive_relay.reset_cooldown()
+
+
+def _client_returning(status_code: int, text: str):
+    """Клиент, отдающий заданный ответ."""
+    response = Mock()
+    response.status_code = status_code
+    response.text = text
+    response.headers = {'content-type': 'text/html'}
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(return_value=response)
+    client.aclose = AsyncMock()
+    return client
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_starts_cooldown() -> None:
+    """429 с капчей включает паузу вместо повторов."""
+    client = _client_returning(429, '<title>archive.ph</title> CAPTCHA')
+
+    result = await archive_relay.fetch_via_archive(
+        'https://example.com/a',
+        extractor=Mock(),
+        client=client,
+    )
+
+    assert result is None
+    assert client.get.await_count == 1
+    assert archive_relay._cooldown_remaining() > 0
+
+
+@pytest.mark.asyncio
+async def test_cooldown_skips_further_requests() -> None:
+    """Во время паузы запрос к архиву не уходит вовсе."""
+    blocked = _client_returning(429, 'CAPTCHA')
+    await archive_relay.fetch_via_archive(
+        'https://example.com/a',
+        extractor=Mock(),
+        client=blocked,
+    )
+
+    second = _client_returning(200, '<html>snapshot</html>')
+    result = await archive_relay.fetch_via_archive(
+        'https://example.com/b',
+        extractor=Mock(),
+        client=second,
+    )
+
+    assert result is None
+    second.get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_captcha_page_with_200_also_counts() -> None:
+    """Заслон распознаётся и без кода 429."""
+    client = _client_returning(
+        200, '<html><title>Are you a robot?</title></html>',
+    )
+
+    result = await archive_relay.fetch_via_archive(
+        'https://example.com/a',
+        extractor=Mock(),
+        client=client,
+    )
+
+    assert result is None
+    assert archive_relay._cooldown_remaining() > 0

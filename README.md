@@ -160,6 +160,13 @@ The Compose stack ships an optional `archive-proxy` service behind the
 `archive-proxy` profile. It starts only when a proxy configuration file
 is present.
 
+Reaching the archive is not the same as being served by it. Archives
+answer automated clients with an anti-bot challenge, and the project does
+not attempt to solve one. The adapter recognises the challenge, pauses
+for thirty minutes, and reports the article as unavailable. A configured
+proxy therefore makes the archive a possible source, never a guaranteed
+one.
+
 ## Publication configuration
 
 `data/paywall_map.yaml` maps domains to classification and extraction strategies. The map is an experimental compatibility catalog, not a service-level guarantee.
