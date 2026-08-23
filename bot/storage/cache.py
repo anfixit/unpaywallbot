@@ -95,10 +95,17 @@ async def get_cached_article(url: str) -> Article | None:
 
     try:
         client = get_redis_client().client
-    except RuntimeError:
+        data = await client.get(_article_key(url_hash))
+    except (RedisError, RuntimeError) as exc:
+        # Недоступный кеш не должен ломать запрос:
+        # статью ещё можно извлечь заново.
+        logger.warning(
+            'Ошибка чтения кеша %s: %s',
+            url_hash[:12],
+            exc,
+        )
         return None
 
-    data = await client.get(_article_key(url_hash))
     if not data:
         return None
 
