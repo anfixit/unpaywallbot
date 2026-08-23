@@ -411,3 +411,105 @@ async def test_platform_runtime_error_falls_back(
     assert archive.await_count == 1
     assert result.success is False
     assert result.error_message is None
+
+
+@pytest.mark.asyncio
+async def test_teaser_is_marked_partial(
+    orchestrator,
+    mock_classifier,
+) -> None:
+    """Пара абзацев с paywall-домена — это анонс."""
+    paywall_info = PaywallInfo(
+        url='https://welt.de/plus/article',
+        domain='welt.de',
+        paywall_type=PaywallType.FREEMIUM,
+        suggested_method=BypassMethod.JS_DISABLE,
+    )
+    mock_classifier.classify.return_value = paywall_info
+    teaser = Article(
+        url=paywall_info.url,
+        content='Bringt sie den Konservatismus zurück? ' * 5,
+    )
+    patch_get, patch_save = _patch_cache()
+
+    with (
+        patch_get,
+        patch_save,
+        patch(
+            'bot.services.orchestrator.fetch_via_js_disable',
+            new=AsyncMock(return_value=teaser),
+        ),
+        patch(
+            'bot.services.orchestrator.fetch_via_archive',
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        result = await orchestrator.process_url(paywall_info.url)
+
+    assert result.article is not None
+    assert len(result.article.content) < 1200
+    assert result.article.is_partial is True
+
+
+@pytest.mark.asyncio
+async def test_full_article_is_not_partial(
+    orchestrator,
+    mock_classifier,
+) -> None:
+    """Полный текст не помечается как фрагмент."""
+    paywall_info = PaywallInfo(
+        url='https://zeit.de/2026/35/artikel',
+        domain='zeit.de',
+        paywall_type=PaywallType.FREEMIUM,
+        suggested_method=BypassMethod.JS_DISABLE,
+    )
+    mock_classifier.classify.return_value = paywall_info
+    full = Article(
+        url=paywall_info.url,
+        content='Ein Kartenhaus aus Steinen. ' * 300,
+    )
+    patch_get, patch_save = _patch_cache()
+
+    with (
+        patch_get,
+        patch_save,
+        patch(
+            'bot.services.orchestrator.fetch_via_js_disable',
+            new=AsyncMock(return_value=full),
+        ),
+    ):
+        result = await orchestrator.process_url(paywall_info.url)
+
+    assert result.article is not None
+    assert result.article.is_partial is False
+
+
+@pytest.mark.asyncio
+async def test_unknown_domain_is_never_partial(
+    orchestrator,
+    mock_classifier,
+) -> None:
+    """Для домена без известного paywall метки нет."""
+    mock_classifier.classify.return_value = PaywallInfo.unknown(
+        'https://example.com/note',
+    )
+    short = Article(
+        url='https://example.com/note',
+        content='Короткая заметка целиком.',
+    )
+    patch_get, patch_save = _patch_cache()
+
+    with (
+        patch_get,
+        patch_save,
+        patch(
+            'bot.services.orchestrator.fetch_via_js_disable',
+            new=AsyncMock(return_value=short),
+        ),
+    ):
+        result = await orchestrator.process_url(
+            'https://example.com/note',
+        )
+
+    assert result.article is not None
+    assert result.article.is_partial is False

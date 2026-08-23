@@ -1,8 +1,10 @@
 """Публикация статей в Telegra.ph.
 
-Длинные статьи (> MAX_MESSAGE_LENGTH) публикуются
-в Telegraph и пользователю отправляется ссылка.
+Когда TELEGRAPH_ENABLED включён, статья публикуется
+на telegra.ph и пользователю отправляется ссылка.
 Telegram рендерит Instant View автоматически.
+Отправка текста в чат остаётся запасным путём на
+случай, если публикация не удалась.
 
 Зависимость: ``uv add 'telegraph[aio]'``
 """
@@ -10,15 +12,9 @@ Telegram рендерит Instant View автоматически.
 import html
 import logging
 
-from bot.constants import MAX_MESSAGE_LENGTH
-
 __all__ = ['TelegraphPublisher']
 
 logger = logging.getLogger(__name__)
-
-# Порог: если текст длиннее — публикуем
-# в Telegraph, иначе — в чат напрямую.
-_TELEGRAPH_THRESHOLD = MAX_MESSAGE_LENGTH - 200
 
 
 class TelegraphPublisher:
@@ -96,16 +92,20 @@ class TelegraphPublisher:
 
     @staticmethod
     def should_use_telegraph(text: str) -> bool:
-        """Нужна ли публикация в Telegraph.
+        """Есть ли что публиковать.
+
+        Ограничение по длине снято: читать статью
+        удобнее одной страницей, а не пачкой
+        сообщений, поэтому публикуется любой
+        непустой текст.
 
         Args:
             text: Текст статьи.
 
         Returns:
-            True если текст слишком длинный для
-            одного сообщения Telegram.
+            True если текст непустой.
         """
-        return len(text) > _TELEGRAPH_THRESHOLD
+        return bool(text.strip())
 
 
 def _text_to_html(

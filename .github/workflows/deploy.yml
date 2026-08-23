@@ -84,6 +84,7 @@ jobs:
       ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
       ALLOWED_USERS: ${{ secrets.ALLOWED_USERS }}
       PUBLIC_ACCESS: ${{ secrets.PUBLIC_ACCESS }}
+      TELEGRAPH_ENABLED: ${{ secrets.TELEGRAPH_ENABLED }}
       GHCR_TOKEN: ${{ github.token }}
       GHCR_USERNAME: ${{ github.actor }}
       IMAGE_REF: ${{ needs.publish.outputs.image }}
@@ -241,7 +242,8 @@ jobs:
             printf 'LOG_LEVEL=INFO\n'
             printf 'ENV=production\n'
             printf 'REQUEST_TIMEOUT_SECONDS=90\n'
-            printf 'TELEGRAPH_ENABLED=false\n'
+            printf 'TELEGRAPH_ENABLED=%s\n' \
+              "${TELEGRAPH_ENABLED:-false}"
           } > "$RUNNER_TEMP/.env.production"
 
       - name: Upload environment file

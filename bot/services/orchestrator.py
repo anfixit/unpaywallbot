@@ -5,7 +5,11 @@ import logging
 import httpx
 
 from bot.auth.account_manager import AccountManager
-from bot.constants import BypassMethod, PaywallType
+from bot.constants import (
+    PARTIAL_CONTENT_THRESHOLD,
+    BypassMethod,
+    PaywallType,
+)
 from bot.models.article import Article
 from bot.models.paywall_info import PaywallInfo
 from bot.models.user_request import UserRequest
@@ -233,6 +237,22 @@ class Orchestrator:
             )
             return None
 
+    @staticmethod
+    def _is_partial(
+        article: Article,
+        paywall_type: PaywallType | None,
+    ) -> bool:
+        """Определить, извлечён ли только анонс.
+
+        Издание с известным paywall, отдавшее пару
+        абзацев, отдало вводку, а не статью. Считать
+        это успехом — значит молча ввести в
+        заблуждение.
+        """
+        if paywall_type in (None, PaywallType.UNKNOWN):
+            return False
+        return len(article.content) < PARTIAL_CONTENT_THRESHOLD
+
     async def _complete(
         self,
         request: UserRequest,
@@ -245,6 +265,10 @@ class Orchestrator:
         """Завершить запрос и дождаться записи в кеш."""
         if article and paywall_type:
             article.paywall_type = paywall_type
+            article.is_partial = self._is_partial(
+                article,
+                paywall_type,
+            )
         if (
             article
             and proposed_method

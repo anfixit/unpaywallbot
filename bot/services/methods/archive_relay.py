@@ -15,6 +15,12 @@ __all__ = ['fetch_via_archive']
 logger = logging.getLogger(__name__)
 
 _ARCHIVE_BASE = 'https://archive.ph'
+
+# Архив блокирует часть хостингов целиком. Без
+# отдельного лимита на соединение каждая попытка
+# съедает десятки секунд из бюджета запроса.
+_ARCHIVE_CONNECT_TIMEOUT = 5.0
+_ARCHIVE_TOTAL_TIMEOUT = 20.0
 _WAIT_MARKERS = (
     'Saving page',
     'Webpage capture',
@@ -35,7 +41,10 @@ async def fetch_via_archive(
 
     close_client = client is None
     if client is None:
-        client = create_safe_http_client()
+        client = create_safe_http_client(
+            timeout_seconds=_ARCHIVE_TOTAL_TIMEOUT,
+            connect_timeout_seconds=_ARCHIVE_CONNECT_TIMEOUT,
+        )
 
     if extractor is None:
         extractor = ContentExtractor()
